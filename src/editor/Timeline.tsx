@@ -1,23 +1,27 @@
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { useEditorStore } from './store';
 import { getTotalDuration } from './utils';
+import { TimelineRuler } from './timeline/TimelineRuler';
+import { TimelineTrackVideo } from './timeline/TimelineTrackVideo';
+import { TimelineTrackZoom } from './timeline/TimelineTrackZoom';
 
 // Constants
 const MIN_PIXELS_PER_SEC = 10;
 const MAX_PIXELS_PER_SEC = 200;
+const TRACK_HEIGHT = 40;
 
 export function Timeline() {
     const containerRef = useRef<HTMLDivElement>(null);
-    const rulerCanvasRef = useRef<HTMLCanvasElement>(null);
     const {
         segments,
         metadata,
         currentTime,
+        recordingStartTime,
         splitSegment,
-        updateSegment,
         setCurrentTime,
         isPlaying,
-        setIsPlaying
+        setIsPlaying,
+        updateSegment
     } = useEditorStore();
 
     // Zoom Level (Timeline Scale)
@@ -30,89 +34,28 @@ export function Timeline() {
     const [hoverTime, setHoverTime] = useState<number | null>(null);
     const [isCTIScrubbing, setIsCTIScrubbing] = useState(false);
 
-    // Drag State (for trimming)
+    // Timeline tracks dragging logic is handled by store actions (updateSegment), 
+    // but the drag interaction state originates here or in tracks.
+    // The Tracks components emit onDragStart. We need to handle the drag listeners here or pass the handler.
+    // The previous implementation had dragging state local to Timeline.
+    // We should lift the state or handle it here.
+    // Since TimelineTrackVideo calls onDragStart, we need the handler here.
+
     const [draggingId, setDraggingId] = useState<string | null>(null);
     const [dragType, setDragType] = useState<'left' | 'right' | null>(null);
     const [dragStartX, setDragStartX] = useState(0);
-    const [dragStartVal, setDragStartVal] = useState(0);
-
-    // Helpers
-    const formatTimeCode = (ms: number) => {
-        const totalSeconds = Math.floor(ms / 1000);
-        const m = Math.floor(totalSeconds / 60);
-        const s = totalSeconds % 60;
-        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    };
-
-    // Draw Ruler
-    useEffect(() => {
-        const canvas = rulerCanvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        // Handle high DPI
-        const dpr = window.devicePixelRatio || 1;
-        const width = Math.max(totalWidth + 500, window.innerWidth); // Ensure it fills view
-        const height = 24;
-
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
-
-        ctx.scale(dpr, dpr);
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#64748b'; // slate-500
-        ctx.strokeStyle = '#334155'; // slate-700
-        ctx.font = '10px monospace';
-        ctx.textBaseline = 'top';
-
-        // Tick Interval logic
-        // If scale is high (>50), show every 0.1s. If low, show every 1s or 5s.
-        let majorInterval = 1000; // 1s
-        let minorInterval = 100; // 0.1s
-
-        if (pixelsPerSec < 20) {
-            majorInterval = 5000;
-            minorInterval = 1000;
-        } else if (pixelsPerSec < 50) {
-            majorInterval = 2000;
-            minorInterval = 500;
-        }
-
-        const durationMs = (width / pixelsPerSec) * 1000;
-
-        ctx.beginPath();
-        for (let t = 0; t <= durationMs; t += minorInterval) {
-            const x = (t / 1000) * pixelsPerSec;
-
-            // Major Tick
-            if (t % majorInterval === 0) {
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, height);
-                ctx.fillText(formatTimeCode(t), x + 4, 2);
-            }
-            // Minor Tick
-            else {
-                ctx.moveTo(x, height - 6);
-                ctx.lineTo(x, height);
-            }
-        }
-        ctx.stroke();
-
-    }, [totalWidth, pixelsPerSec, segments]); // Redraw when scale or duration changes
-
+    const [dragStartVal, setDragStartVal] = useState(0); // This was sourceStart/End
 
     // --- Mouse Handlers ---
 
     const getTimeFromEvent = (e: React.MouseEvent | MouseEvent) => {
         if (!containerRef.current) return 0;
         const rect = containerRef.current.getBoundingClientRect();
-        // Mouse X relative to container viewport
-        // But container Scrolls, so we must add scrollLeft
-        const x = e.clientX - rect.left + containerRef.current.scrollLeft;
-        return (x / pixelsPerSec) * 1000;
+        // Determine scroll offset safely
+        const scrollLeft = containerRef.current.scrollLeft || 0;
+        const x = e.clientX - rect.left + scrollLeft;
+        const time = (x / pixelsPerSec) * 1000;
+        return Math.max(0, time);
     };
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -125,8 +68,8 @@ export function Timeline() {
     }, [isCTIScrubbing, pixelsPerSec, totalDuration, setCurrentTime]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
-        // Only start scrubbing if not clicking a clip handle
-        // (Clip handles stopPropagation, so this should be fine)
+        // Only start scrubbing if accessing the background/ruler area, not clips
+        // But clips stop propagation, so this should be fine.
         setIsCTIScrubbing(true);
         const time = getTimeFromEvent(e);
         setCurrentTime(Math.max(0, Math.min(time, totalDuration)));
@@ -141,62 +84,60 @@ export function Timeline() {
         setIsCTIScrubbing(false);
     };
 
-    // Global drag end for CTI scrubbing (just in case mouse leaves during drag)
-    useEffect(() => {
-        const up = () => setIsCTIScrubbing(false);
-        window.addEventListener('mouseup', up);
-        return () => window.removeEventListener('mouseup', up);
-    }, []);
+    // --- Dragging Logic for Trimming ---
+    // This effect handles global mouse move/up when dragging a handle
+    React.useEffect(() => {
+        if (!draggingId || !dragType) return;
 
-
-    // --- Trimming interactions (Existing) ---
-    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right', currentVal: number) => {
-        e.stopPropagation(); // Prevent CTI scrubbing
-        setDraggingId(id);
-        setDragType(type);
-        setDragStartX(e.clientX);
-        setDragStartVal(currentVal);
-    };
-
-    useEffect(() => {
-        const handleWinMouseMove = (e: MouseEvent) => {
-            if (!draggingId || !dragType) return;
+        const handleGlobalMouseMove = (e: MouseEvent) => {
             const deltaX = e.clientX - dragStartX;
             const deltaMs = (deltaX / pixelsPerSec) * 1000;
+
+            // We need to know the original segment to apply constraints
+            // But updateSegment handles logic if we pass raw new values? 
+            // The store's updateSegment takes (id, newStart, newEnd).
+            // We need to calculate new values based on delta.
+
+            // Re-find segment to get current constraints? 
+            // Or we just calculate new potential value.
 
             const segment = segments.find(s => s.id === draggingId);
             if (!segment) return;
 
-            // Logic...
-            let newStart = segment.sourceStart;
-            let newEnd = segment.sourceEnd;
-
             if (dragType === 'left') {
-                newStart = Math.min(Math.max(0, dragStartVal + deltaMs), segment.sourceEnd - 100);
+                const newStart = Math.max(0, dragStartVal + deltaMs);
+                // Ensure start < end
+                if (newStart < segment.sourceEnd) {
+                    updateSegment(draggingId, newStart, segment.sourceEnd);
+                }
             } else {
-                newEnd = Math.max(segment.sourceStart + 100, dragStartVal + deltaMs);
+                const newEnd = Math.max(segment.sourceStart, dragStartVal + deltaMs);
+                updateSegment(draggingId, segment.sourceStart, newEnd);
             }
-            updateSegment(draggingId, newStart, newEnd);
         };
 
-        const handleWinMouseUp = () => {
+        const handleGlobalMouseUp = () => {
             setDraggingId(null);
             setDragType(null);
         };
 
-        if (draggingId) {
-            window.addEventListener('mousemove', handleWinMouseMove);
-            window.addEventListener('mouseup', handleWinMouseUp);
-            return () => {
-                window.removeEventListener('mousemove', handleWinMouseMove);
-                window.removeEventListener('mouseup', handleWinMouseUp);
-            };
-        }
-    }, [draggingId, dragType, dragStartX, dragStartVal, segments, pixelsPerSec, updateSegment]);
+        window.addEventListener('mousemove', handleGlobalMouseMove);
+        window.addEventListener('mouseup', handleGlobalMouseUp);
 
+        return () => {
+            window.removeEventListener('mousemove', handleGlobalMouseMove);
+            window.removeEventListener('mouseup', handleGlobalMouseUp);
+        };
+    }, [draggingId, dragType, dragStartX, dragStartVal, pixelsPerSec, segments, updateSegment]);
 
-    // Styling constants
-    const TRACK_HEIGHT = 40;
+    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right', val: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDraggingId(id);
+        setDragType(type);
+        setDragStartX(e.clientX);
+        setDragStartVal(val);
+    };
 
     // --- Format Helper for Toolbar ---
     const formatFullTime = (ms: number) => {
@@ -207,7 +148,7 @@ export function Timeline() {
         return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}.${dec}`;
     };
 
-    // Calculate segments layout
+    // Calculate segments layout for Video Track
     const virtualSegments = useMemo(() => {
         let currentVirtual = 0;
         return segments.map(seg => {
@@ -252,7 +193,7 @@ export function Timeline() {
                 </div>
             </div>
 
-            {/* 2. Timeline Surface (Handles Scroll & Mouse events) */}
+            {/* 2. Timeline Surface */}
             <div
                 className="flex-1 overflow-x-auto overflow-y-hidden relative custom-scrollbar bg-[#1e1e1e]"
                 ref={containerRef}
@@ -265,81 +206,31 @@ export function Timeline() {
                     className="relative min-w-full"
                     style={{ width: `${Math.max(totalWidth + 400, 0)}px` }}
                 >
-                    {/* Ruler (Canvas) */}
-                    <div className="sticky top-0 z-10 bg-[#1e1e1e] border-b border-[#333]">
-                        <canvas ref={rulerCanvasRef} className="block pointer-events-none" style={{ height: '24px' }} />
-                    </div>
+                    {/* Ruler */}
+                    <TimelineRuler totalWidth={totalWidth} pixelsPerSec={pixelsPerSec} />
 
                     {/* Tracks Container */}
                     <div className="py-2 flex flex-col gap-1">
 
                         {/* Video Track */}
-                        <div className="relative w-full" style={{ height: TRACK_HEIGHT }}>
-                            {virtualSegments.map((seg) => {
-                                const left = (seg.virtualStart / 1000) * pixelsPerSec;
-                                const width = (seg.duration / 1000) * pixelsPerSec;
-
-                                return (
-                                    <div
-                                        key={seg.id}
-                                        className="absolute top-0 bottom-0 bg-green-600/90 border border-green-500/50 rounded-md overflow-hidden group hover:brightness-110 transition-all cursor-pointer box-border"
-                                        style={{ left: `${left}px`, width: `${width}px` }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onMouseDown={(e) => e.stopPropagation()} // Prevent CTI scrubbing start when clicking clip
-                                    >
-                                        <div className="flex items-center px-2 h-full gap-2 text-xs font-medium text-white shadow-sm">
-                                            <span>🎥 Clip</span>
-                                            <span className="opacity-70 font-normal">{(seg.duration / 1000).toFixed(1)}s</span>
-                                        </div>
-
-                                        <div
-                                            className="absolute top-0 bottom-0 left-0 w-2 cursor-ew-resize hover:bg-white/30 z-20"
-                                            onMouseDown={(e) => handleDragStart(e, seg.id, 'left', seg.sourceStart)}
-                                        />
-                                        <div
-                                            className="absolute top-0 bottom-0 right-0 w-2 cursor-ew-resize hover:bg-white/30 z-20"
-                                            onMouseDown={(e) => handleDragStart(e, seg.id, 'right', seg.sourceEnd)}
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        <TimelineTrackVideo
+                            virtualSegments={virtualSegments}
+                            pixelsPerSec={pixelsPerSec}
+                            trackHeight={TRACK_HEIGHT}
+                            onDragStart={handleDragStart}
+                        />
 
                         {/* Zoom Track */}
-                        <div className="relative w-full" style={{ height: TRACK_HEIGHT }}>
-                            {metadata.map((item, index) => {
-                                let virtualStart = -1;
-                                let currentVirtual = 0;
-                                let found = false;
-                                for (const seg of segments) {
-                                    if (item.timestamp >= seg.sourceStart && item.timestamp <= seg.sourceEnd) {
-                                        virtualStart = currentVirtual + (item.timestamp - seg.sourceStart);
-                                        found = true;
-                                        break;
-                                    }
-                                    currentVirtual += (seg.sourceEnd - seg.sourceStart);
-                                }
-
-                                if (!found) return null;
-
-                                const duration = 3000;
-                                const left = (virtualStart / 1000) * pixelsPerSec;
-                                const width = (duration / 1000) * pixelsPerSec;
-
-                                return (
-                                    <div
-                                        key={index}
-                                        className="absolute top-0 bottom-0 bg-[#00acc1] border border-[#00acc1] rounded-md overflow-hidden text-xs text-white flex items-center px-2 shadow-sm"
-                                        style={{ left: `${left}px`, width: `${width}px` }}
-                                    >
-                                        🔍 Zoom
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        <TimelineTrackZoom
+                            metadata={metadata}
+                            segments={segments}
+                            pixelsPerSec={pixelsPerSec}
+                            trackHeight={TRACK_HEIGHT}
+                            recordingStartTime={recordingStartTime}
+                        />
                     </div>
 
-                    {/* Hover Line (Phantom CTI) */}
+                    {/* Hover Line */}
                     {hoverTime !== null && (
                         <div
                             className="absolute top-0 bottom-0 w-[1px] bg-white/30 z-20 pointer-events-none"
@@ -347,7 +238,7 @@ export function Timeline() {
                         />
                     )}
 
-                    {/* CTI (Current Time Indicator) */}
+                    {/* CTI */}
                     <div
                         className="absolute top-0 bottom-0 w-[1px] bg-red-500 z-30 pointer-events-none"
                         style={{ left: `${(currentTime / 1000) * pixelsPerSec}px` }}

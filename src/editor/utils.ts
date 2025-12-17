@@ -31,3 +31,10 @@ export function sourceToVirtualTime(sourceTime: number, segments: Segment[]): nu
 export function getTotalDuration(segments: Segment[]): number {
     return segments.reduce((acc, seg) => acc + (seg.sourceEnd - seg.sourceStart), 0);
 }
+
+export function formatTimeCode(ms: number) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}

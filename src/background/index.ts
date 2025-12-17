@@ -1,6 +1,14 @@
 console.log("Background service worker running");
 
-let isRecording = false;
+interface BackgroundState {
+    isRecording: boolean;
+    events: any[];
+}
+
+const state: BackgroundState = {
+    isRecording: false,
+    events: []
+};
 
 // Ensure offscreen document exists
 async function setupOffscreenDocument(path: string) {
@@ -19,20 +27,32 @@ async function setupOffscreenDocument(path: string) {
     });
 }
 
-// Store metadata in memory for the current recording session
-let clickEvents: any[] = [];
-
+// Event Listener
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.type === 'GET_RECORDING_STATE') {
-        sendResponse({ isRecording });
-    } else if (message.type === 'CLICK_EVENT') {
-        console.log("[Background] Received CLICK_EVENT", message.payload);
-        if (isRecording) {
-            clickEvents.push(message.payload);
-            console.log("[Background] Stored event. Total events:", clickEvents.length);
+    // 1. Event Capture
+    if (['CLICK_EVENT', 'MOUSE_POS', 'URL_CHANGE', 'KEYDOWN'].includes(message.type)) {
+        if (state.isRecording) {
+            console.log("Storing event:", message.type);
+            // Append event type to payload for easy storage
+            const eventWithMeta = { ...message.payload, type: message.type.toLowerCase().replace('_event', '') };
+
+            // Map event names to our internal schema:
+            // CLICK_EVENT -> 'click' (done above by replace)
+            // MOUSE_POS -> 'mouse_pos' -> 'mouse'
+            // URL_CHANGE -> 'url_change' -> 'url'
+            // KEYDOWN -> 'keydown'
+
+            if (eventWithMeta.type === 'mouse_pos') eventWithMeta.type = 'mouse';
+            if (eventWithMeta.type === 'url_change') eventWithMeta.type = 'url';
+
+            state.events.push(eventWithMeta);
+
             // Optionally back up to storage periodically
-            chrome.storage.local.set({ currentSessionEvents: clickEvents });
+            chrome.storage.local.set({ currentSessionEvents: state.events });
         }
+        return true;
+    } else if (message.type === 'GET_RECORDING_STATE') {
+        sendResponse({ isRecording: state.isRecording });
     } else if (message.type === 'START_RECORDING') {
         const { tabId } = message;
 
@@ -71,11 +91,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                     data: { ...message, hasAudio: message.hasAudio, hasCamera: message.hasCamera }
                 });
 
-                isRecording = true;
-                clickEvents = []; // Reset events
+                state.isRecording = true;
+                state.events = []; // Reset events
                 chrome.storage.local.set({ currentSessionEvents: [] });
 
-                // Notify content script safely
                 // Notify content script safely
                 console.log("[Background] Sending RECORDING_STATUS_CHANGED=true to tab", tabId);
 
@@ -113,7 +132,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return true; // Keep channel open
     } else if (message.type === 'STOP_RECORDING') {
         chrome.runtime.sendMessage({ type: 'STOP_RECORDING_OFFSCREEN' });
-        isRecording = false;
+        state.isRecording = false;
 
         // Notify all tabs (or just active)
         chrome.tabs.query({}, (tabs) => {
@@ -128,8 +147,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
 
         // Save final metadata state
-        console.log("[Background] Saving final metadata:", clickEvents.length, "events");
-        chrome.storage.local.set({ recordingMetadata: clickEvents });
+        console.log("[Background] Saving final metadata:", state.events.length, "events");
+        chrome.storage.local.set({ recordingMetadata: state.events });
 
         sendResponse({ success: true });
     } else if (message.type === 'OPEN_EDITOR') {

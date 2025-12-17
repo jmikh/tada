@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { resolve } from 'path';
 import { crx } from '@crxjs/vite-plugin'
 import manifest from './manifest.json'
 
@@ -14,10 +15,12 @@ export default defineConfig(({ mode }) => ({
     sourcemap: mode === 'development',
     rollupOptions: {
       input: {
-        offscreen: 'src/offscreen/offscreen.html',
-        editor: 'src/editor/index.html',
-        permissions: 'src/permissions/permissions.html',
+        editor: resolve(__dirname, 'src/editor/index.html'),
+        offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),
+        permissions: resolve(__dirname, 'src/permissions/permissions.html'),
+        test_zoom: resolve(__dirname, 'src/test-zoom/index.html')
       },
+      output: {},
     },
   },
 }))

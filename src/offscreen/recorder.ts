@@ -148,7 +148,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
                 cameraStream?.getTracks().forEach(t => t.stop());
                 mixedStream?.getTracks().forEach(t => t.stop());
 
-                await saveToIndexedDB(blob, duration);
+                await saveToIndexedDB(blob, duration, startTime);
                 chrome.runtime.sendMessage({ type: 'OPEN_EDITOR', url: 'src/editor/index.html' });
             };
 
@@ -165,7 +165,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
     }
 });
 
-async function saveToIndexedDB(blob: Blob, duration: number) {
+async function saveToIndexedDB(blob: Blob, duration: number, startTime: number) {
     return new Promise<void>((resolve, reject) => {
         const request = indexedDB.open('RecordoDB', 1);
 
@@ -185,6 +185,7 @@ async function saveToIndexedDB(blob: Blob, duration: number) {
                 id: 'latest',
                 blob: blob,
                 duration: duration,
+                startTime: startTime,
                 timestamp: Date.now()
             };
 
