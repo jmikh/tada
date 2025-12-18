@@ -1,5 +1,7 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditorStore } from './store';
+import { VideoMappingConfig } from '../lib/zoom/videoMappingConfig';
+
 
 interface PlayerCanvasProps {
     src: string;
@@ -13,7 +15,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
     onLoadedMetadata,
     muted = true
 }, ref) => {
-    const { paddingPercentage } = useEditorStore();
+    const { outputVideoSize, inputVideoSize, paddingPercentage } = useEditorStore();
     const internalVideoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number>(0);
@@ -27,22 +29,47 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             onLoadedMetadata(e);
         }
         // Initialize canvas size once metadata is loaded
-        const video = e.currentTarget;
         if (canvasRef.current) {
-            canvasRef.current.width = video.videoWidth;
-            canvasRef.current.height = video.videoHeight;
+            canvasRef.current.width = outputVideoSize.width;
+            canvasRef.current.height = outputVideoSize.height;
         }
         startRenderLoop();
+    };
+
+    const drawVideo = (video: HTMLVideoElement, canvas: HTMLCanvasElement) => {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.log('No canvas context');
+            return;
+        }
+
+        if (!inputVideoSize) {
+            console.log('No inputVideoSize');
+            return;
+        }
+
+        const cw = canvas.width;
+        const ch = canvas.height;
+
+        const config = new VideoMappingConfig(
+            inputVideoSize,
+            outputVideoSize,
+            paddingPercentage
+        );
+
+        const { x, y, width, height } = config.projectedBox;
+
+        ctx.clearRect(0, 0, cw, ch);
+        console.log(x, y, width, height);
+        ctx.drawImage(video, x, y, width, height);
     };
 
     const startRenderLoop = () => {
         const render = () => {
             if (internalVideoRef.current && canvasRef.current) {
                 const video = internalVideoRef.current;
-                const ctx = canvasRef.current.getContext('2d');
-
-                if (ctx && !video.paused && !video.ended) {
-                    ctx.drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
+                if (!video.paused && !video.ended) {
+                    drawVideo(video, canvasRef.current);
                 }
             }
             animationFrameRef.current = requestAnimationFrame(render);
@@ -58,6 +85,19 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
         };
     }, []);
 
+    // Effect to update canvas size if outputVideoSize changes
+    useEffect(() => {
+        if (canvasRef.current) {
+            canvasRef.current.width = outputVideoSize.width;
+            canvasRef.current.height = outputVideoSize.height;
+            // Trigger a redraw if we have a frame
+            const video = internalVideoRef.current;
+            if (video && !video.paused && !video.ended) {
+                drawVideo(video, canvasRef.current);
+            }
+        }
+    }, [outputVideoSize, inputVideoSize, paddingPercentage]);
+
     // Effect to handle seeking/updates when paused (to update canvas)
     useEffect(() => {
         const video = internalVideoRef.current;
@@ -65,10 +105,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
 
         const handleSeeked = () => {
             if (canvasRef.current) {
-                const ctx = canvasRef.current.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
-                }
+                drawVideo(video, canvasRef.current);
             }
         };
 
@@ -98,15 +135,11 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             {/* Canvas - Render Target */}
             <canvas
                 ref={canvasRef}
-                className="bg-transparent"
                 style={{
-                    objectFit: 'contain',
-                    backgroundColor: 'transparent',
-                    width: `${(1 - 2 * paddingPercentage) * 100}%`,
-                    height: `${(1 - 2 * paddingPercentage) * 100}%`,
-                    position: 'absolute',
-                    left: `${paddingPercentage * 100}%`,
-                    top: `${paddingPercentage * 100}%`
+                    backgroundColor: 'blue',
+                    aspectRatio: `${outputVideoSize.width} / ${outputVideoSize.height}`,
+                    width: '100%',
+                    height: '100%',
                 }}
             />
         </>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+
 export interface Metadata {
     timestamp: number;
     tagName: string;
@@ -26,6 +27,8 @@ interface EditorState {
     isExporting: boolean;
     zoomIntensity: number;
     paddingPercentage: number;
+    outputVideoSize: { width: number; height: number };
+    inputVideoSize: { width: number; height: number } | null;
 
     // Timeline State
     segments: Segment[];
@@ -41,6 +44,8 @@ interface EditorState {
     setIsExporting: (isExporting: boolean) => void;
     setZoomIntensity: (intensity: number) => void;
     setPaddingPercentage: (percentage: number) => void;
+    setOutputVideoSize: (size: { width: number; height: number }) => void;
+    setInputVideoSize: (size: { width: number; height: number }) => void;
 
     // Timeline Actions
     initSegments: (durationMs: number) => void;
@@ -57,6 +62,8 @@ export const useEditorStore = create<EditorState>((set) => ({
     isExporting: false,
     zoomIntensity: 2.0,
     paddingPercentage: 0.05,
+    outputVideoSize: { width: 3840, height: 2160 },
+    inputVideoSize: null,
 
     segments: [],
     maxDuration: 0,
@@ -75,6 +82,8 @@ export const useEditorStore = create<EditorState>((set) => ({
     setIsExporting: (isExporting) => set({ isExporting }),
     setZoomIntensity: (intensity) => set({ zoomIntensity: intensity }),
     setPaddingPercentage: (percentage) => set({ paddingPercentage: percentage }),
+    setOutputVideoSize: (size) => set({ outputVideoSize: size }),
+    setInputVideoSize: (size) => set({ inputVideoSize: size }),
 
     initSegments: (durationMs) => set({
         segments: [{ id: crypto.randomUUID(), sourceStart: 0, sourceEnd: durationMs }],

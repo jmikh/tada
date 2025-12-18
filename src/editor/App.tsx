@@ -6,7 +6,8 @@ import { Timeline } from './Timeline';
 import { EventInspector } from './EventInspector';
 import { ZoomInspector } from './ZoomInspector';
 import { virtualToSourceTime } from './utils';
-import { calculateZoomSchedule, type ZoomEvent, type ZoomKeyframe, VideoMappingConfig } from '../lib/zoom';
+import { calculateZoomSchedule, type ZoomEvent, type ZoomKeyframe } from '../lib/zoom';
+import { VideoMappingConfig } from '../lib/zoom/videoMappingConfig';
 
 interface BoxRect {
     x: number;
@@ -27,10 +28,10 @@ function Editor() {
 
     const [containerSize, setContainerSize] = useState({ width: 800, height: 450 });
     const [schedule, setSchedule] = useState<ZoomKeyframe[]>([]);
-    const [videoDim, setVideoDim] = useState<{ w: number, h: number } | null>(null);
-
     const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-        setVideoDim({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight });
+        const w = e.currentTarget.videoWidth;
+        const h = e.currentTarget.videoHeight;
+        setInputVideoSize({ width: w, height: h });
     };
 
     // Store State
@@ -48,7 +49,11 @@ function Editor() {
         initSegments,
         setCurrentTime,
         setIsPlaying,
-        paddingPercentage
+        // paddingPercentage, // Removed unused
+        outputVideoSize,
+        inputVideoSize,
+        paddingPercentage,
+        setInputVideoSize
     } = useEditorStore();
 
     // Data Loading
@@ -72,6 +77,10 @@ function Editor() {
                     setVideoUrl(URL.createObjectURL(blob));
                     if (result.startTime) setRecordingStartTime(result.startTime);
                     else if (result.timestamp) setRecordingStartTime(result.timestamp);
+
+                    if (result.width && result.height) {
+                        setInputVideoSize({ width: result.width, height: result.height });
+                    }
 
                     if (result.duration && result.duration > 0 && result.duration !== Infinity) {
                         initSegments(result.duration);
@@ -173,15 +182,16 @@ function Editor() {
 
         const events = metadata as unknown as ZoomEvent[];
         // Attempt to find viewport size from first relevant event, or default to video size
-        const firstEvent = events.find(e => e.viewportWidth && e.viewportHeight);
-        const viewportSize = firstEvent
-            ? { width: firstEvent.viewportWidth, height: firstEvent.viewportHeight }
-            : { width: videoW, height: videoH };
+        // Attempt to find viewport size from first relevant event, or default to video size
+        // const firstEvent = events.find(e => e.viewportWidth && e.viewportHeight);
+
+        // We rely on inputVideoSize from store which should be set by now
+        if (!inputVideoSize) return;
 
         const mappingConfig = new VideoMappingConfig(
-            viewportSize, // inputVideoSize
-            { width: videoW, height: videoH }, // outputVideoSize
-            paddingPercentage // padding percentage
+            inputVideoSize,
+            outputVideoSize,
+            paddingPercentage
         );
 
         const config = {
@@ -193,7 +203,7 @@ function Editor() {
         const newSchedule = calculateZoomSchedule(config, mappingConfig, events);
         setSchedule(newSchedule);
 
-    }, [metadata, zoomIntensity, videoUrl, videoDim, paddingPercentage]);
+    }, [metadata, zoomIntensity, videoUrl, inputVideoSize, paddingPercentage]);
 
     // Video Dimensions & Rendering Logic - Moved to top
 
@@ -232,7 +242,7 @@ function Editor() {
 
             // Active Click Highlight
             let activeClickPos = null;
-            if (videoDim && videoDim.w > 0) { // Only calculate if we have dims? Or assume metadata events are valid?
+            if (inputVideoSize) {
                 // Actually events logic is independent of videoDim state, but we need activeEvent from metadata
                 const events = metadata as unknown as ZoomEvent[];
                 const config = { zoomOffset: -2000, zoomDuration: 2000 };
@@ -262,14 +272,14 @@ function Editor() {
 
         video.addEventListener('timeupdate', handleVisualization);
         return () => video.removeEventListener('timeupdate', handleVisualization);
-    }, [metadata, recordingStartTime, schedule, videoDim]); // Depend on videoDim if we use it, or just use video ref
+    }, [metadata, recordingStartTime, schedule, inputVideoSize, paddingPercentage]); // Depend on inputVideoSize
 
 
     // Calculate Rendered Rect (for overlay positioning)
     let renderedStyle = {};
-    if (videoDim && videoDim.w > 0 && videoDim.h > 0) {
+    if (outputVideoSize && outputVideoSize.width > 0) {
         const containerAspect = containerSize.width / containerSize.height;
-        const videoAspect = videoDim.w / videoDim.h;
+        const videoAspect = outputVideoSize.width / outputVideoSize.height;
 
         let rw, rh;
         if (containerAspect > videoAspect) {
@@ -290,7 +300,8 @@ function Editor() {
     const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
 
     const handleMouseMove = (e: React.MouseEvent) => {
-        if (!videoDim || !videoDim.w || Object.keys(renderedStyle).length === 0) return;
+        // inputVideoSize from store
+        if (!inputVideoSize || !inputVideoSize.width || Object.keys(renderedStyle).length === 0) return;
 
         const rect = e.currentTarget.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -300,8 +311,9 @@ function Editor() {
         const rw = (renderedStyle as any).width;
         const rh = (renderedStyle as any).height;
 
-        const scaleX = rw / videoDim.w;
-        const scaleY = rh / videoDim.h;
+        // Calculate coords relative to source video
+        const scaleX = rw / inputVideoSize.width;
+        const scaleY = rh / inputVideoSize.height;
 
         const sx = x / scaleX;
         const sy = y / scaleY;
@@ -319,8 +331,9 @@ function Editor() {
 
     // Helper to scale Source Coords to Rendered Coords
     const s2r = (val: number, isX: boolean) => {
-        if (!videoDim) return 0;
-        const scale = isX ? ((renderedStyle as any).width / videoDim.w) : ((renderedStyle as any).height / videoDim.h);
+        // inputVideoSize from store
+        if (!inputVideoSize) return 0;
+        const scale = isX ? ((renderedStyle as any).width / inputVideoSize.width) : ((renderedStyle as any).height / inputVideoSize.height);
         return val * scale;
     };
 

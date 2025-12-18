@@ -151,13 +151,33 @@ chrome.runtime.onMessage.addListener(async (message) => {
                 if (animationFrameId) cancelAnimationFrame(animationFrameId);
                 audioContext?.close();
 
+                // Determine final dimensions
+                let width = 1920;
+                let height = 1080;
+
+                // If we used a canvas (camera mode), use canvas dims
+                if (canvasStream) {
+                    const settings = mixedStream?.getVideoTracks()[0]?.getSettings();
+                    if (settings?.width && settings?.height) {
+                        width = settings.width;
+                        height = settings.height;
+                    }
+                } else {
+                    // No camera, simple screen stream
+                    const settings = screenStream.getVideoTracks()[0]?.getSettings();
+                    if (settings?.width && settings?.height) {
+                        width = settings.width;
+                        height = settings.height;
+                    }
+                }
+
                 // Stop all source streams
                 screenStream.getTracks().forEach(t => t.stop());
                 micStream?.getTracks().forEach(t => t.stop());
                 cameraStream?.getTracks().forEach(t => t.stop());
                 mixedStream?.getTracks().forEach(t => t.stop());
 
-                await saveToIndexedDB(blob, duration, startTime);
+                await saveToIndexedDB(blob, duration, startTime, width, height);
                 chrome.runtime.sendMessage({ type: 'OPEN_EDITOR', url: 'src/editor/index.html' });
             };
 
@@ -174,7 +194,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
     }
 });
 
-async function saveToIndexedDB(blob: Blob, duration: number, startTime: number) {
+async function saveToIndexedDB(blob: Blob, duration: number, startTime: number, width: number, height: number) {
     return new Promise<void>((resolve, reject) => {
         const request = indexedDB.open('RecordoDB', 1);
 
@@ -195,7 +215,9 @@ async function saveToIndexedDB(blob: Blob, duration: number, startTime: number) 
                 blob: blob,
                 duration: duration,
                 startTime: startTime,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                width: width,
+                height: height
             };
 
             const putRequest = store.put(recording);
