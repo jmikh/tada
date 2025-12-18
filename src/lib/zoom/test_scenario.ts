@@ -28,20 +28,17 @@ const events: ZoomEvent[] = [
     {
         type: 'click',
         timestamp: 1000,
-        x: 0, y: 0, tagName: 'div',
-        viewportWidth: inputVideoWidth, viewportHeight: inputVideoHeight, scrollX: 0, scrollY: 0
+        x: 0, y: 0,
     },
     {
         type: 'click',
         timestamp: 3000,
-        x: inputVideoWidth / 2, y: inputVideoHeight / 2, tagName: 'button',
-        viewportWidth: inputVideoWidth, viewportHeight: inputVideoHeight, scrollX: 0, scrollY: 0
+        x: inputVideoWidth / 2, y: inputVideoHeight / 2,
     },
     {
         type: 'click',
         timestamp: 5000,
-        x: inputVideoWidth, y: inputVideoHeight, tagName: 'span',
-        viewportWidth: inputVideoWidth, viewportHeight: inputVideoHeight, scrollX: 0, scrollY: 0
+        x: inputVideoWidth, y: inputVideoHeight,
     }
 ];
 

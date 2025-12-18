@@ -82,22 +82,9 @@ export function calculateZoomSchedule(
 
     // 4. Iterate Events and Generate Keyframes
     for (const evt of clickEvents) {
-        // Project Event Center to Output Space
-        // We need to scale the event coordinates from CSS pixels (viewport) to Physical pixels (video)
-        // because the video might be recorded on a Retina display (DPR > 1).
-        let dprX = 1;
-        let dprY = 1;
-        if (evt.viewportWidth && evt.viewportHeight) {
-            dprX = mappingConfig.inputVideoSize.width / evt.viewportWidth;
-            dprY = mappingConfig.inputVideoSize.height / evt.viewportHeight;
-        }
-
-        const eventViewportX = evt.x * dprX;
-        const eventViewportY = evt.y * dprY;
-
         const centerOfInterest = mappingConfig.projectInputToOutput({
-            x: eventViewportX,
-            y: eventViewportY
+            x: evt.x,
+            y: evt.y
         });
 
         // Calculate Zoom Box Top-Left

@@ -40,6 +40,8 @@ const MOUSE_POLL_INTERVAL = 500;
 
 const captureOptions = { capture: true };
 
+
+
 function sendMouseEvent(type: 'MOUSEDOWN' | 'MOUSEUP', e?: MouseEvent) {
     const x = e ? e.clientX : 0;
     const y = e ? e.clientY : 0;
@@ -48,7 +50,6 @@ function sendMouseEvent(type: 'MOUSEDOWN' | 'MOUSEUP', e?: MouseEvent) {
     if (e && e.target instanceof Element) {
         const rect = e.target.getBoundingClientRect();
         elementMeta = {
-            tagName: e.target.tagName,
             width: rect.width,
             height: rect.height
         };
@@ -61,10 +62,6 @@ function sendMouseEvent(type: 'MOUSEDOWN' | 'MOUSEUP', e?: MouseEvent) {
         x,
         y,
         ...elementMeta,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        scrollX: window.scrollX,
-        scrollY: window.scrollY
     });
 }
 
@@ -86,7 +83,6 @@ document.addEventListener('pointerdown', (e) => {
     if (e.target instanceof Element) {
         const rect = e.target.getBoundingClientRect();
         elementMeta = {
-            tagName: e.target.tagName,
             width: rect.width,
             height: rect.height
         };
@@ -97,10 +93,6 @@ document.addEventListener('pointerdown', (e) => {
             x,
             y,
             ...elementMeta,
-            viewportWidth: window.innerWidth,
-            viewportHeight: window.innerHeight,
-            scrollX: window.scrollX,
-            scrollY: window.scrollY
         },
         timestamp: Date.now()
     };
@@ -144,13 +136,26 @@ function sendMessageToBackground(type: string, payload: any) {
     if (type != "MOUSE_POS") {
         console.log("[Content] Sending message:", type, payload);
     }
+
     if (!chrome.runtime?.id) {
         // Extension context invalidated (e.g. extension reloaded). 
         // Stop doing work to avoid errors.
         logger.warn("[Recordo] Extension context invalidated. Please reload the page.");
         return;
     }
-    chrome.runtime.sendMessage({ type, payload }).catch(() => {
+
+    // Apply DPR scaling to coordinates/dimensions
+    const dpr = window.devicePixelRatio || 1;
+    const scaledPayload = { ...payload };
+    const keysToScale = ['x', 'y', 'width', 'height', 'lastX', 'lastY', 'startX', 'startY']; // Expanded list just in case
+
+    for (const key of Object.keys(scaledPayload)) {
+        if (keysToScale.includes(key) && typeof scaledPayload[key] === 'number') {
+            scaledPayload[key] *= dpr;
+        }
+    }
+
+    chrome.runtime.sendMessage({ type, payload: scaledPayload }).catch(() => {
         // Ignore connection errors
     });
 }
@@ -167,10 +172,6 @@ setInterval(() => {
             timestamp: now,
             x: lastMouseX,
             y: lastMouseY,
-            viewportWidth: window.innerWidth,
-            viewportHeight: window.innerHeight,
-            scrollX: window.scrollX,
-            scrollY: window.scrollY
         });
     }
 }, MOUSE_POLL_INTERVAL);
@@ -180,10 +181,6 @@ function sendUrlEvent() {
     sendMessageToBackground('URL_CHANGE', {
         timestamp: Date.now(),
         url: window.location.href,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        scrollX: window.scrollX,
-        scrollY: window.scrollY
     });
 }
 
@@ -238,11 +235,6 @@ window.addEventListener('keydown', (e) => {
             isInput,
             isModifier,
             isSpecial,
-            tagName: target.tagName,
-            viewportWidth: window.innerWidth,
-            viewportHeight: window.innerHeight,
-            scrollX: window.scrollX,
-            scrollY: window.scrollY
         });
     }
 });
@@ -264,7 +256,6 @@ window.addEventListener('scroll', (e) => {
     let y = 0;
     let width = window.innerWidth;
     let height = window.innerHeight;
-    let tagName = 'BODY'; // Default to body/viewport
     let isNested = false;
 
     if (e.target instanceof Element) {
@@ -274,11 +265,9 @@ window.addEventListener('scroll', (e) => {
         y = rect.top;
         width = rect.width;
         height = rect.height;
-        tagName = e.target.tagName;
         isNested = true;
     }
 
-    // console.log("[Content] Scroll", { x, y, width, height, tagName, isNested });
 
     sendMessageToBackground('SCROLL', {
         timestamp: now,
@@ -286,10 +275,6 @@ window.addEventListener('scroll', (e) => {
         y,
         width,
         height,
-        tagName,
         isNested,
-        // Keep viewport dims just in case
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight
     });
 }, true); // Use capture to detect nested scrolls (which don't bubble)

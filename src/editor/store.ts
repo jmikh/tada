@@ -8,10 +8,6 @@ export interface Metadata {
     y: number;
     width: number;
     height: number;
-    viewportWidth: number;
-    viewportHeight: number;
-    scrollX: number;
-    scrollY: number;
 }
 
 export interface Segment {

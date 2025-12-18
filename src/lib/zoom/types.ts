@@ -3,15 +3,10 @@ export interface Size { width: number; height: number; }
 
 export interface BaseEvent {
     timestamp: number;
-    viewportWidth: number;
-    viewportHeight: number;
-    scrollX: number;
-    scrollY: number;
 }
 
 export interface ClickEvent extends BaseEvent {
     type: 'click';
-    tagName: string;
     x: number;
     y: number;
 }
@@ -53,16 +48,7 @@ export interface MouseUpEvent extends BaseEvent {
     y: number;
 }
 
-export interface DomMutationEvent extends BaseEvent {
-    type: 'mutation';
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    tagName?: string;
-}
-
-export type ZoomEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent | DomMutationEvent;
+export type ZoomEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent;
 
 
 
