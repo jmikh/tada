@@ -6,28 +6,19 @@ import { Timeline } from './Timeline';
 import { EventInspector } from './EventInspector';
 import { ZoomInspector } from './ZoomInspector';
 import { virtualToSourceTime } from './utils';
-import { calculateZoomSchedule, type ZoomEvent, type ZoomKeyframe } from '../lib/zoom';
-import { VideoMappingConfig } from '../lib/zoom/videoMappingConfig';
+import { type ZoomEvent } from '../lib/zoom';
+import { useZoomSchedule } from './useZoomSchedule';
 
-interface BoxRect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
+
+
 
 function Editor() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Visualization State
-    const [zoomViz, setZoomViz] = useState<{
-        zoomBox: BoxRect | null;
-        activeClick: { x: number; y: number } | null;
-    }>({ zoomBox: null, activeClick: null });
-
     const [containerSize, setContainerSize] = useState({ width: 800, height: 450 });
-    const [schedule, setSchedule] = useState<ZoomKeyframe[]>([]);
+    const schedule = useZoomSchedule();
+
     const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         const w = e.currentTarget.videoWidth;
         const h = e.currentTarget.videoHeight;
@@ -39,7 +30,6 @@ function Editor() {
         videoUrl,
         metadata,
         recordingStartTime,
-        zoomIntensity,
         segments,
         currentTime,
         isPlaying,
@@ -52,7 +42,6 @@ function Editor() {
         // paddingPercentage, // Removed unused
         outputVideoSize,
         inputVideoSize,
-        paddingPercentage,
         setInputVideoSize
     } = useEditorStore();
 
@@ -172,107 +161,13 @@ function Editor() {
     }, []);
 
     // Calculate Schedule when metadata/video ready
-    useEffect(() => {
-        const video = videoRef.current;
-        if (!video || !metadata || metadata.length === 0) return;
 
-        const videoW = video.videoWidth;
-        const videoH = video.videoHeight;
-        if (videoW === 0 || videoH === 0) return;
-
-        const events = metadata as unknown as ZoomEvent[];
-        // Attempt to find viewport size from first relevant event, or default to video size
-        // Attempt to find viewport size from first relevant event, or default to video size
-        // const firstEvent = events.find(e => e.viewportWidth && e.viewportHeight);
-
-        // We rely on inputVideoSize from store which should be set by now
-        if (!inputVideoSize) return;
-
-        const mappingConfig = new VideoMappingConfig(
-            inputVideoSize,
-            outputVideoSize,
-            paddingPercentage
-        );
-
-        const config = {
-            zoomIntensity: zoomIntensity,
-            zoomDuration: 0,
-            zoomOffset: 2000 // Start zooming 2s before the click
-        };
-
-        const newSchedule = calculateZoomSchedule(config, mappingConfig, events);
-        setSchedule(newSchedule);
-
-    }, [metadata, zoomIntensity, videoUrl, inputVideoSize, paddingPercentage]);
 
     // Video Dimensions & Rendering Logic - Moved to top
 
 
     // Visualization Update Loop
-    useEffect(() => {
-        const video = videoRef.current;
-        if (!video) return;
-
-        const handleVisualization = () => {
-            const currentMs = video.currentTime * 1000;
-            const absTime = recordingStartTime + currentMs;
-
-            // 1. Find Active Keyframe
-            let activeKeyframe: ZoomKeyframe | null = null;
-            for (let i = schedule.length - 1; i >= 0; i--) {
-                if (absTime >= schedule[i].timestamp) {
-                    activeKeyframe = schedule[i];
-                    break;
-                }
-            }
-
-            if (!activeKeyframe) return;
-
-            // Transient Visualization: Only show for 1 second after the keyframe timestamp
-            const durationSinceKeyframe = absTime - activeKeyframe.timestamp;
-            if (durationSinceKeyframe > 1000) {
-                setZoomViz({ zoomBox: null, activeClick: null });
-                return;
-            }
-
-            const { zoomBox } = activeKeyframe;
-            console.log(zoomBox)
-
-
-
-            // Active Click Highlight
-            let activeClickPos = null;
-            if (inputVideoSize) {
-                // Actually events logic is independent of videoDim state, but we need activeEvent from metadata
-                const events = metadata as unknown as ZoomEvent[];
-                const config = { zoomOffset: -2000, zoomDuration: 2000 };
-                const activeEvent = events.find(e => {
-                    if (e.type !== 'click') return false;
-                    const rel = absTime - e.timestamp;
-                    return rel >= config.zoomOffset && rel < (config.zoomOffset + config.zoomDuration);
-                });
-
-                if (activeEvent && activeEvent.type === 'click') {
-                    // Need videoDims to map viewport to source if we want accuracy?
-                    // In handleVisualization we can use video.videoWidth directly since we are in the effect callback!
-                    const vw = video.videoWidth;
-                    const vh = video.videoHeight;
-                    if (vw > 0 && vh > 0) {
-                        const sx = vw / activeEvent.viewportWidth;
-                        const sy = vh / activeEvent.viewportHeight;
-                        const ex = (activeEvent.x - activeEvent.scrollX) * sx;
-                        const ey = (activeEvent.y - activeEvent.scrollY) * sy;
-                        activeClickPos = { x: ex, y: ey };
-                    }
-                }
-            }
-
-            setZoomViz({ zoomBox, activeClick: activeClickPos });
-        };
-
-        video.addEventListener('timeupdate', handleVisualization);
-        return () => video.removeEventListener('timeupdate', handleVisualization);
-    }, [metadata, recordingStartTime, schedule, inputVideoSize, paddingPercentage]); // Depend on inputVideoSize
+    // Removed overlay visualization logic as it moved to PlayerCanvas
 
 
     // Calculate Rendered Rect (for overlay positioning)
@@ -329,13 +224,7 @@ function Editor() {
         setTooltip(null);
     };
 
-    // Helper to scale Source Coords to Rendered Coords
-    const s2r = (val: number, isX: boolean) => {
-        // inputVideoSize from store
-        if (!inputVideoSize) return 0;
-        const scale = isX ? ((renderedStyle as any).width / inputVideoSize.width) : ((renderedStyle as any).height / inputVideoSize.height);
-        return val * scale;
-    };
+
 
     return (
         <div className="w-full h-screen bg-black flex flex-col overflow-hidden">
@@ -366,32 +255,6 @@ function Editor() {
                                     onLoadedMetadata={onVideoLoaded}
                                     muted
                                 />
-                                {/* Overlays */}
-                                {zoomViz.zoomBox && (
-                                    <div
-                                        className="absolute border-2 border-red-500 pointer-events-none z-10 box-border"
-                                        style={{
-                                            left: s2r(zoomViz.zoomBox.x, true),
-                                            top: s2r(zoomViz.zoomBox.y, false),
-                                            width: s2r(zoomViz.zoomBox.width, true),
-                                            height: s2r(zoomViz.zoomBox.height, false),
-                                        }}
-                                    >
-                                        <div className="absolute top-0 left-0 bg-green-500 text-black text-[10px] px-1 font-bold">Zoom Box</div>
-                                    </div>
-                                )}
-
-                                {/* Active Click Indicator */}
-                                {zoomViz.activeClick && (
-                                    <div
-                                        className="absolute w-4 h-4 bg-yellow-400 rounded-full border-2 border-white z-20 shadow-lg animate-pulse"
-                                        style={{
-                                            left: s2r(zoomViz.activeClick.x, true),
-                                            top: s2r(zoomViz.activeClick.y, false),
-                                            transform: 'translate(-50%, -50%)'
-                                        }}
-                                    />
-                                )}
 
                                 {/* All event markers (faint) */}
                                 {metadata.map(() => {

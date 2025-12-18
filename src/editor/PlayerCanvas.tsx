@@ -1,12 +1,13 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditorStore } from './store';
+import { useZoomSchedule } from './useZoomSchedule';
+import { type ZoomKeyframe } from '../lib/zoom';
 import { VideoMappingConfig } from '../lib/zoom/videoMappingConfig';
-
 
 interface PlayerCanvasProps {
     src: string;
     onLoadedMetadata?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
-    className?: string; // For compatibility if passed, though we style internal elements
+    className?: string;
     muted?: boolean;
 }
 
@@ -15,13 +16,16 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
     onLoadedMetadata,
     muted = true
 }, ref) => {
-    const { outputVideoSize, inputVideoSize, paddingPercentage } = useEditorStore();
+    // We need some store values for sizing, but schedule comes from hook
+    const { recordingStartTime, outputVideoSize, inputVideoSize, paddingPercentage } = useEditorStore();
     const internalVideoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number>(0);
 
     // Expose the internal video element to the parent
     useImperativeHandle(ref, () => internalVideoRef.current as HTMLVideoElement);
+
+    const schedule = useZoomSchedule();
 
     // Metadata handler wrapper
     const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -44,7 +48,6 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
         }
 
         if (!inputVideoSize) {
-            console.log('No inputVideoSize');
             return;
         }
 
@@ -57,11 +60,44 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             paddingPercentage
         );
 
-        const { x, y, width, height } = config.projectedBox;
-
         ctx.clearRect(0, 0, cw, ch);
-        console.log(x, y, width, height);
+
+        // 1. Draw Video Frame (Cropped/Zoomed)
+        const { x, y, width, height } = config.projectedBox;
         ctx.drawImage(video, x, y, width, height);
+
+        // 2. Draw Zoom Box Overlay (Debugging/Visualization)
+        const currentMs = video.currentTime * 1000;
+        const absTime = recordingStartTime + currentMs;
+
+        // Find Active Keyframe
+        let activeKeyframe: ZoomKeyframe | null = null;
+        for (let i = schedule.length - 1; i >= 0; i--) {
+            if (absTime >= schedule[i].timestamp) {
+                activeKeyframe = schedule[i];
+                break;
+            }
+        }
+
+        if (activeKeyframe) {
+            const durationSinceKeyframe = absTime - activeKeyframe.timestamp;
+            // Transient Visualization: Only show for 1 second after the keyframe timestamp
+            if (durationSinceKeyframe <= 1000) {
+                console.log('Active Keyframe', activeKeyframe);
+                const { zoomBox } = activeKeyframe;
+
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(zoomBox.x, zoomBox.y, zoomBox.width, zoomBox.height);
+
+                // Label
+                ctx.fillStyle = 'green';
+                ctx.fillRect(zoomBox.x, zoomBox.y, 60, 15);
+                ctx.fillStyle = 'black';
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText('Zoom Box', zoomBox.x + 2, zoomBox.y + 11);
+            }
+        }
     };
 
     const startRenderLoop = () => {
