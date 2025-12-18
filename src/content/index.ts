@@ -1,13 +1,21 @@
-console.log("Recordo content script loaded");
+import { logger } from '../utils/logger';
+
+// Prevent duplicate injection
+if ((window as any).hasRecordoInjected) {
+    throw new Error("Recordo content script already injected");
+}
+(window as any).hasRecordoInjected = true;
+
+logger.log("[Recordo] Content script loaded");
 
 let isRecording = false;
 
 // Listen for recording state changes from background
-chrome.runtime.onMessage.addListener((message) => {
-    console.log("[Content] Received message:", message);
+chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
+    logger.log("[Content] Received message:", message);
     if (message.type === 'RECORDING_STATUS_CHANGED') {
         isRecording = message.isRecording;
-        console.log("[Content] isRecording updated to:", isRecording);
+        logger.log("[Content] isRecording updated to:", isRecording);
     }
 });
 
@@ -15,11 +23,11 @@ chrome.runtime.onMessage.addListener((message) => {
 chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response) => {
     if (chrome.runtime.lastError) {
         // Background might not be ready or we are orphaned
-        console.log("[Content] Setup error or orphaned:", chrome.runtime.lastError.message);
+        logger.log("[Content] Setup error or orphaned:", chrome.runtime.lastError.message);
         return;
     }
-    console.log("[Content] Initial recording state:", response);
-    if (response?.isRecording) {
+    logger.log("[Content] Initial recording state:", response);
+    if (response && response.isRecording) {
         isRecording = true;
     }
 });
@@ -28,28 +36,118 @@ chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response) => {
 let lastMouseX = 0;
 let lastMouseY = 0;
 let lastMouseTime = 0;
-let isDragging = false;
 const MOUSE_POLL_INTERVAL = 500;
+
+const captureOptions = { capture: true };
+
+function sendMouseEvent(type: 'MOUSEDOWN' | 'MOUSEUP', e?: MouseEvent) {
+    const x = e ? e.clientX : 0;
+    const y = e ? e.clientY : 0;
+
+    let elementMeta = {};
+    if (e && e.target instanceof Element) {
+        const rect = e.target.getBoundingClientRect();
+        elementMeta = {
+            tagName: e.target.tagName,
+            width: rect.width,
+            height: rect.height
+        };
+    }
+
+    console.log(`[Content] Sending ${type} at (${x},${y})`);
+
+    sendMessageToBackground(type, {
+        timestamp: Date.now(),
+        x,
+        y,
+        ...elementMeta,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY
+    });
+}
 
 document.addEventListener('mousemove', (e) => {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
-});
+}, captureOptions);
 
-document.addEventListener('mousedown', () => {
-    isDragging = true;
-});
+// Click Synthesis State
+let bufferedMouseDown: { event: any, timestamp: number } | null = null;
+const CLICK_THRESHOLD = 500; // ms
 
-document.addEventListener('mouseup', () => {
-    isDragging = false;
-});
+document.addEventListener('pointerdown', (e) => {
+    // console.log("[Content] pointerdown");
+    // Buffer the mousedown event
+    const x = e.clientX;
+    const y = e.clientY;
+    let elementMeta = {};
+    if (e.target instanceof Element) {
+        const rect = e.target.getBoundingClientRect();
+        elementMeta = {
+            tagName: e.target.tagName,
+            width: rect.width,
+            height: rect.height
+        };
+    }
+
+    bufferedMouseDown = {
+        event: {
+            x,
+            y,
+            ...elementMeta,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY
+        },
+        timestamp: Date.now()
+    };
+}, captureOptions);
+
+document.addEventListener('pointerup', (e) => {
+    // console.log("[Content] pointerup");
+
+    if (bufferedMouseDown) {
+        const now = Date.now();
+        const diff = now - bufferedMouseDown.timestamp;
+
+        if (diff <= CLICK_THRESHOLD) {
+            // Synthesize CLICK
+            // We use the timestamp of the MOUSE DOWN for consistency with where the action started?
+            // User requested: "send the click event with timestamp of mouse down"
+            sendMessageToBackground('CLICK', {
+                ...bufferedMouseDown.event,
+                timestamp: bufferedMouseDown.timestamp
+            });
+        } else {
+            // Send split events: stored MOUSE DOWN then MOUSE UP
+            sendMessageToBackground('MOUSEDOWN', {
+                ...bufferedMouseDown.event,
+                timestamp: bufferedMouseDown.timestamp
+            });
+
+            sendMouseEvent('MOUSEUP', e);
+        }
+
+        // Clear buffer
+        bufferedMouseDown = null;
+    } else {
+        // Orphaned mouseup (maybe mousedown happened before inject?), just send it
+        sendMouseEvent('MOUSEUP', e);
+    }
+}, captureOptions);
 
 // Helper to safely send messages
 function sendMessageToBackground(type: string, payload: any) {
+    if (type != "MOUSE_POS") {
+        console.log("[Content] Sending message:", type, payload);
+    }
     if (!chrome.runtime?.id) {
         // Extension context invalidated (e.g. extension reloaded). 
         // Stop doing work to avoid errors.
-        console.warn("[Recordo] Extension context invalidated. Please reload the page.");
+        logger.warn("[Recordo] Extension context invalidated. Please reload the page.");
         return;
     }
     chrome.runtime.sendMessage({ type, payload }).catch(() => {
@@ -69,7 +167,6 @@ setInterval(() => {
             timestamp: now,
             x: lastMouseX,
             y: lastMouseY,
-            isDragging: isDragging,
             viewportWidth: window.innerWidth,
             viewportHeight: window.innerHeight,
             scrollX: window.scrollX,
@@ -112,9 +209,12 @@ window.addEventListener('keydown', (e) => {
     if (!chrome.runtime?.id) return;
 
     const target = e.target as HTMLElement;
-    const isInput = target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable;
+    // TODO: We might need to revisit this logic in the future
+    const isInput = (target.isContentEditable && target.tagName === 'INPUT') || target.tagName === 'TEXTAREA';
+
+
+    // Ignore standalone modifier keys (we only care about the combo)
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
 
     // If in input, only capture Modifiers or Special keys (Enter/Tab/Esc)
     // If NOT in input, capture everything (for tool shortcuts like Figma 'v', 'r')
@@ -123,6 +223,8 @@ window.addEventListener('keydown', (e) => {
     const isSpecial = ['Enter', 'Tab', 'Escape', 'Backspace'].includes(e.key);
 
     const shouldCapture = !isInput || (isInput && (isModifier || isSpecial));
+
+    console.log(`[Content] Keydown: ${e.key} | Target=${target.tagName} | isInput=${isInput} | isModifier=${isModifier} | isSpecial=${isSpecial} | Capture=${shouldCapture}`);
 
     if (shouldCapture) {
         sendMessageToBackground('KEYDOWN', {
@@ -133,6 +235,10 @@ window.addEventListener('keydown', (e) => {
             metaKey: e.metaKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
+            isInput,
+            isModifier,
+            isSpecial,
+            tagName: target.tagName,
             viewportWidth: window.innerWidth,
             viewportHeight: window.innerHeight,
             scrollX: window.scrollX,
@@ -141,29 +247,49 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
-// Click Capture
-document.addEventListener('click', (e) => {
-    if (!isRecording) {
-        console.log("[Content] Click ignored (not recording)");
-        return;
+// Scroll Capture
+let lastScrollTime = 0;
+window.addEventListener('scroll', (e) => {
+    // console.log("Scrolling"); 
+    const now = Date.now();
+    if (now - lastScrollTime < 500) {
+        lastScrollTime = now;
+        return; // 500ms throttle
     }
+    lastScrollTime = now;
+
     if (!chrome.runtime?.id) return;
 
-    const target = e.target as HTMLElement;
-    const rect = target.getBoundingClientRect();
+    let x = 0;
+    let y = 0;
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    let tagName = 'BODY'; // Default to body/viewport
+    let isNested = false;
 
-    console.log("Captured click on:", target.tagName);
+    if (e.target instanceof Element) {
+        // It's a nested element scroll
+        const rect = e.target.getBoundingClientRect();
+        x = rect.left;
+        y = rect.top;
+        width = rect.width;
+        height = rect.height;
+        tagName = e.target.tagName;
+        isNested = true;
+    }
 
-    sendMessageToBackground('CLICK_EVENT', {
-        timestamp: Date.now(),
-        tagName: target.tagName,
-        x: e.clientX,
-        y: e.clientY,
-        width: rect.width,
-        height: rect.height,
-        scrollX: window.scrollX,
-        scrollY: window.scrollY,
+    // console.log("[Content] Scroll", { x, y, width, height, tagName, isNested });
+
+    sendMessageToBackground('SCROLL', {
+        timestamp: now,
+        x,
+        y,
+        width,
+        height,
+        tagName,
+        isNested,
+        // Keep viewport dims just in case
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight
     });
-}, true);
+}, true); // Use capture to detect nested scrolls (which don't bubble)

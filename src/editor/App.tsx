@@ -1,21 +1,43 @@
 import { useState, useEffect, useRef } from 'react';
+import { PlayerCanvas } from './PlayerCanvas';
+import { logger } from '../utils/logger';
 import { useEditorStore, type Metadata } from './store';
 import { Timeline } from './Timeline';
 import { EventInspector } from './EventInspector';
+import { ZoomInspector } from './ZoomInspector';
 import { virtualToSourceTime } from './utils';
-import { calculateZoomTarget, resolveZoomTransform, type ZoomEvent } from '../lib/zoom';
+import { calculateZoomSchedule, type ZoomEvent, type ZoomKeyframe, VideoMappingConfig } from '../lib/zoom';
+
+interface BoxRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
 
 function Editor() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+
+    // Visualization State
+    const [zoomViz, setZoomViz] = useState<{
+        zoomBox: BoxRect | null;
+        activeClick: { x: number; y: number } | null;
+    }>({ zoomBox: null, activeClick: null });
+
+    const [containerSize, setContainerSize] = useState({ width: 800, height: 450 });
+    const [schedule, setSchedule] = useState<ZoomKeyframe[]>([]);
+    const [videoDim, setVideoDim] = useState<{ w: number, h: number } | null>(null);
+
+    const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        setVideoDim({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight });
+    };
 
     // Store State
     const {
         videoUrl,
         metadata,
         recordingStartTime,
-        isExporting,
         zoomIntensity,
         segments,
         currentTime,
@@ -23,11 +45,10 @@ function Editor() {
         setVideoUrl,
         setMetadata,
         setRecordingStartTime,
-        setIsExporting,
-        setZoomIntensity,
         initSegments,
         setCurrentTime,
-        setIsPlaying
+        setIsPlaying,
+        paddingPercentage
     } = useEditorStore();
 
     // Data Loading
@@ -49,11 +70,9 @@ function Editor() {
                 if (result) {
                     const blob = result.blob;
                     setVideoUrl(URL.createObjectURL(blob));
-                    // Prioritize actual startTime, fallback to timestamp (legacy/safeguard)
                     if (result.startTime) setRecordingStartTime(result.startTime);
                     else if (result.timestamp) setRecordingStartTime(result.timestamp);
 
-                    // Initialize segments with reliable duration if available
                     if (result.duration && result.duration > 0 && result.duration !== Infinity) {
                         initSegments(result.duration);
                     }
@@ -62,10 +81,8 @@ function Editor() {
         };
     }, []);
 
-    // Initialize Segments on Video Load (Logic removed temporarily to fix build)
-
     useEffect(() => {
-        console.log("Segments updated:", segments);
+        logger.log("Segments updated:", segments);
     }, [segments]);
 
     // Virtual Player Logic
@@ -73,18 +90,15 @@ function Editor() {
         const video = videoRef.current;
         if (!video) return;
 
-        // Sync Store -> Video (Seek)
-        // Only seek if difference is significant to avoid stutter during playback
         const targetSourceTime = virtualToSourceTime(currentTime, segments);
 
         if (targetSourceTime !== null) {
             const diff = Math.abs((video.currentTime * 1000) - targetSourceTime);
-            if (diff > 100) { // 100ms tolerance
+            if (diff > 100) {
                 video.currentTime = targetSourceTime / 1000;
             }
         }
 
-        // Play/Pause Sync
         if (isPlaying && video.paused) {
             video.play().catch(console.error);
         } else if (!isPlaying && !video.paused) {
@@ -93,8 +107,6 @@ function Editor() {
 
     }, [currentTime, isPlaying, segments]);
 
-    // Video Time Update Loop (The heartbeat of the virtual player)
-    // Uses requestAnimationFrame for smooth 60fps updates instead of timeupdate (4hz)
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !isPlaying) return;
@@ -103,14 +115,11 @@ function Editor() {
 
         const loop = () => {
             const currentSourceMs = video.currentTime * 1000;
-
-            // Find which segment we are in
             let foundSeg = false;
             for (const seg of segments) {
                 if (currentSourceMs >= seg.sourceStart && currentSourceMs < seg.sourceEnd) {
-                    // Inside a segment, update virtual time
                     const offset = currentSourceMs - seg.sourceStart;
-                    let virtualStartOfSeg = 0; // Calculate accumulated start
+                    let virtualStartOfSeg = 0;
                     for (const s of segments) {
                         if (s.id === seg.id) break;
                         virtualStartOfSeg += (s.sourceEnd - s.sourceStart);
@@ -121,21 +130,15 @@ function Editor() {
                 }
             }
 
-            // Gap Jumping Logic
             if (!foundSeg && segments.length > 0) {
-                // If we are not in a segment, we probably drifted or reached end of one.
-                // Find the NEXT segment start
-                const nextSeg = segments.find(s => s.sourceStart > currentSourceMs);
+                const nextSeg = segments.find((s: any) => s.sourceStart > currentSourceMs);
                 if (nextSeg) {
-                    // Jump to start of next segment
                     video.currentTime = nextSeg.sourceStart / 1000;
                 } else {
-                    // End of all segments
-                    // Only stop if we really are past everything
                     const lastSeg = segments[segments.length - 1];
                     if (currentSourceMs > lastSeg.sourceEnd) {
                         setIsPlaying(false);
-                        return; // Stop loop
+                        return;
                     }
                 }
             }
@@ -143,266 +146,287 @@ function Editor() {
             rAFId = requestAnimationFrame(loop);
         };
 
-        // Start loop
         loop();
-
         return () => cancelAnimationFrame(rAFId);
     }, [isPlaying, segments]);
 
+    // Handle Resize for Centering
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const ro = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                setContainerSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+            }
+        });
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
+
+    // Calculate Schedule when metadata/video ready
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video || !metadata || metadata.length === 0) return;
+
+        const videoW = video.videoWidth;
+        const videoH = video.videoHeight;
+        if (videoW === 0 || videoH === 0) return;
+
+        const events = metadata as unknown as ZoomEvent[];
+        // Attempt to find viewport size from first relevant event, or default to video size
+        const firstEvent = events.find(e => e.viewportWidth && e.viewportHeight);
+        const viewportSize = firstEvent
+            ? { width: firstEvent.viewportWidth, height: firstEvent.viewportHeight }
+            : { width: videoW, height: videoH };
+
+        const mappingConfig = new VideoMappingConfig(
+            viewportSize, // inputVideoSize
+            { width: videoW, height: videoH }, // outputVideoSize
+            paddingPercentage // padding percentage
+        );
+
+        const config = {
+            zoomIntensity: zoomIntensity,
+            zoomDuration: 0,
+            zoomOffset: 2000 // Start zooming 2s before the click
+        };
+
+        const newSchedule = calculateZoomSchedule(config, mappingConfig, events);
+        setSchedule(newSchedule);
+
+    }, [metadata, zoomIntensity, videoUrl, videoDim, paddingPercentage]);
+
+    // Video Dimensions & Rendering Logic - Moved to top
 
 
-
-    // Zoom & Transform Logic
+    // Visualization Update Loop
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
 
-        const handleTransform = () => {
-            // 1. Prepare Config & State
-            const currentTime = video.currentTime * 1000;
-            const absTime = recordingStartTime + currentTime;
+        const handleVisualization = () => {
+            const currentMs = video.currentTime * 1000;
+            const absTime = recordingStartTime + currentMs;
 
-            // Map Metadata
-            // We need to cast broadly first, then usage will depend on type guards or filtering
-            const events = metadata as unknown as ZoomEvent[];
+            // 1. Find Active Keyframe
+            let activeKeyframe: ZoomKeyframe | null = null;
+            for (let i = schedule.length - 1; i >= 0; i--) {
+                if (absTime >= schedule[i].timestamp) {
+                    activeKeyframe = schedule[i];
+                    break;
+                }
+            }
 
-            const videoW = video.videoWidth;
-            const videoH = video.videoHeight;
+            if (!activeKeyframe) return;
 
-            if (videoW === 0 || videoH === 0) return;
+            // Transient Visualization: Only show for 1 second after the keyframe timestamp
+            const durationSinceKeyframe = absTime - activeKeyframe.timestamp;
+            if (durationSinceKeyframe > 1000) {
+                setZoomViz({ zoomBox: null, activeClick: null });
+                return;
+            }
 
-            // Phase 1: Decide Target (Pure Logic)
-            const config = {
-                videoSize: { width: videoW, height: videoH },
-                zoomIntensity: zoomIntensity,
-                zoomDuration: 2000,
-                zoomOffset: -2000,
-                padding: 200
-            };
-
-            const target = calculateZoomTarget(config, events, absTime);
-
-            // Phase 2: Resolve Transform (Projection)
-            const containerW = containerRef.current?.clientWidth || 800;
-            const containerH = containerRef.current?.clientHeight || 450;
-
-            const result = resolveZoomTransform(
-                target,
-                { width: containerW, height: containerH },
-                { width: videoW, height: videoH }
-            );
-
-            // 3. Apply
-            setTransform(result);
-        };
-
-        video.addEventListener('timeupdate', handleTransform);
-        return () => video.removeEventListener('timeupdate', handleTransform);
-    }, [metadata, recordingStartTime, zoomIntensity]);
+            const { zoomBox } = activeKeyframe;
+            console.log(zoomBox)
 
 
-    const exportVideo = async () => {
-        // ... (Keep existing implementation)
-        if (!videoRef.current || !videoUrl) return;
-        setIsExporting(true);
-        const video = videoRef.current;
-        const width = video.videoWidth;
-        const height = video.videoHeight;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+            // Active Click Highlight
+            let activeClickPos = null;
+            if (videoDim && videoDim.w > 0) { // Only calculate if we have dims? Or assume metadata events are valid?
+                // Actually events logic is independent of videoDim state, but we need activeEvent from metadata
+                const events = metadata as unknown as ZoomEvent[];
+                const config = { zoomOffset: -2000, zoomDuration: 2000 };
+                const activeEvent = events.find(e => {
+                    if (e.type !== 'click') return false;
+                    const rel = absTime - e.timestamp;
+                    return rel >= config.zoomOffset && rel < (config.zoomOffset + config.zoomDuration);
+                });
 
-        const stream = canvas.captureStream(30);
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-        const chunks: BlobPart[] = [];
-
-        recorder.ondataavailable = (e) => {
-            if (e.data.size > 0) chunks.push(e.data);
-        };
-        recorder.onstop = () => {
-            const blob = new Blob(chunks, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `recordo-export-${Date.now()}.webm`;
-            a.click();
-            setIsExporting(false);
-        };
-
-        recorder.start();
-
-        // Render Loop for Segments
-        // We must manually play through each segment
-        video.pause();
-
-        for (const seg of segments) {
-            await new Promise<void>((resolve) => {
-                const startSec = seg.sourceStart / 1000;
-                const endSec = seg.sourceEnd / 1000;
-                video.currentTime = startSec;
-
-                const onSeeked = () => {
-                    video.removeEventListener('seeked', onSeeked);
-                    video.play();
-                };
-                video.addEventListener('seeked', onSeeked);
-
-                const checkTime = () => {
-                    if (video.currentTime >= endSec || video.ended) {
-                        video.pause();
-                        video.removeEventListener('timeupdate', checkTime);
-                        resolve();
+                if (activeEvent && activeEvent.type === 'click') {
+                    // Need videoDims to map viewport to source if we want accuracy?
+                    // In handleVisualization we can use video.videoWidth directly since we are in the effect callback!
+                    const vw = video.videoWidth;
+                    const vh = video.videoHeight;
+                    if (vw > 0 && vh > 0) {
+                        const sx = vw / activeEvent.viewportWidth;
+                        const sy = vh / activeEvent.viewportHeight;
+                        const ex = (activeEvent.x - activeEvent.scrollX) * sx;
+                        const ey = (activeEvent.y - activeEvent.scrollY) * sy;
+                        activeClickPos = { x: ex, y: ey };
                     }
-                    // Draw frame
-                    ctx.drawImage(video, 0, 0, width, height);
-                    // TODO: Apply zoom transforms here too if we want them in export
-                };
-                video.addEventListener('timeupdate', checkTime);
-            });
+                }
+            }
+
+            setZoomViz({ zoomBox, activeClick: activeClickPos });
+        };
+
+        video.addEventListener('timeupdate', handleVisualization);
+        return () => video.removeEventListener('timeupdate', handleVisualization);
+    }, [metadata, recordingStartTime, schedule, videoDim]); // Depend on videoDim if we use it, or just use video ref
+
+
+    // Calculate Rendered Rect (for overlay positioning)
+    let renderedStyle = {};
+    if (videoDim && videoDim.w > 0 && videoDim.h > 0) {
+        const containerAspect = containerSize.width / containerSize.height;
+        const videoAspect = videoDim.w / videoDim.h;
+
+        let rw, rh;
+        if (containerAspect > videoAspect) {
+            rh = containerSize.height;
+            rw = rh * videoAspect;
+        } else {
+            rw = containerSize.width;
+            rh = rw / videoAspect;
         }
 
-        recorder.stop();
+        renderedStyle = {
+            width: rw,
+            height: rh
+        };
+    }
+
+    // Tooltip Logic
+    const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
+
+    const handleMouseMove = (e: React.MouseEvent) => {
+        if (!videoDim || !videoDim.w || Object.keys(renderedStyle).length === 0) return;
+
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // Rendered Width/Height
+        const rw = (renderedStyle as any).width;
+        const rh = (renderedStyle as any).height;
+
+        const scaleX = rw / videoDim.w;
+        const scaleY = rh / videoDim.h;
+
+        const sx = x / scaleX;
+        const sy = y / scaleY;
+
+        setTooltip({
+            x: e.clientX + 15,
+            y: e.clientY + 15,
+            text: `X: ${Math.round(sx)}, Y: ${Math.round(sy)}`
+        });
     };
 
-    const exportDebugData = async () => {
-        if (!videoUrl) return;
-
-        // 1. Export Metadata JSON
-        const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
-        const metadataUrl = URL.createObjectURL(metadataBlob);
-        const a1 = document.createElement('a');
-        a1.href = metadataUrl;
-        a1.download = 'recordo-metadata.json';
-        a1.click();
-
-        // 2. Export Video File (Raw)
-        // We need to fetch the blob again from local URL or store
-        const videoBlob = await fetch(videoUrl).then(r => r.blob());
-        const videoDownloadUrl = URL.createObjectURL(videoBlob);
-        const a2 = document.createElement('a');
-        a2.href = videoDownloadUrl;
-        a2.download = 'recordo-source.webm';
-        a2.click();
+    const handleMouseLeave = () => {
+        setTooltip(null);
     };
 
-    const videoStyle: React.CSSProperties = {
-        transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-        transformOrigin: '0 0',
-        transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)' // Smooth zoom
+    // Helper to scale Source Coords to Rendered Coords
+    const s2r = (val: number, isX: boolean) => {
+        if (!videoDim) return 0;
+        const scale = isX ? ((renderedStyle as any).width / videoDim.w) : ((renderedStyle as any).height / videoDim.h);
+        return val * scale;
     };
 
     return (
         <div className="w-full h-screen bg-black flex flex-col overflow-hidden">
-            {/* Main Area: Player + Side Panel */}
             <div className="flex-1 flex overflow-hidden">
-
-                {/* Center: Video Player */}
                 <div
                     id="video-player-container"
                     className="flex-1 flex overflow-hidden relative items-center justify-center bg-[#1e1e1e]"
                 >
                     <div
-                        id="video-transform-wrapper"
                         ref={containerRef}
-                        className="relative shadow-2xl bg-black"
+                        className="relative flex items-center justify-center shadow-2xl"
                         style={{
-                            width: '800px', // Fixed size for now, or use responsive
-                            height: '450px',
+                            width: '100%',
+                            height: '100%',
                             overflow: 'hidden'
                         }}
                     >
                         {videoUrl && (
                             <div
-                                id="video-content-layer"
-                                style={{
-                                    ...videoStyle,
-                                    width: '100%',
-                                    height: '100%',
-                                    position: 'relative'
-                                }}
+                                className="bg-blue-200"
+                                style={{ position: 'relative', ...renderedStyle }}
+                                onMouseMove={handleMouseMove}
+                                onMouseLeave={handleMouseLeave}
                             >
-                                <video
+                                <PlayerCanvas
                                     ref={videoRef}
                                     src={videoUrl}
-                                    // onLoadedMetadata={onVideoLoaded} // Temporarily unused
-                                    className="w-full h-full object-contain"
+                                    onLoadedMetadata={onVideoLoaded}
                                     muted
                                 />
-                                {/* Overlay for Debugging Click Positions */}
-                                {metadata.map((m, i) => (
+                                {/* Overlays */}
+                                {zoomViz.zoomBox && (
                                     <div
-                                        key={i}
-                                        id={`debug-click-marker-${i}`}
-                                        className="absolute w-2 h-2 bg-red-500 rounded-full pointer-events-none z-50 border border-white"
+                                        className="absolute border-2 border-red-500 pointer-events-none z-10 box-border"
                                         style={{
-                                            left: m.x - m.scrollX,
-                                            top: m.y - m.scrollY,
+                                            left: s2r(zoomViz.zoomBox.x, true),
+                                            top: s2r(zoomViz.zoomBox.y, false),
+                                            width: s2r(zoomViz.zoomBox.width, true),
+                                            height: s2r(zoomViz.zoomBox.height, false),
+                                        }}
+                                    >
+                                        <div className="absolute top-0 left-0 bg-green-500 text-black text-[10px] px-1 font-bold">Zoom Box</div>
+                                    </div>
+                                )}
+
+                                {/* Active Click Indicator */}
+                                {zoomViz.activeClick && (
+                                    <div
+                                        className="absolute w-4 h-4 bg-yellow-400 rounded-full border-2 border-white z-20 shadow-lg animate-pulse"
+                                        style={{
+                                            left: s2r(zoomViz.activeClick.x, true),
+                                            top: s2r(zoomViz.activeClick.y, false),
                                             transform: 'translate(-50%, -50%)'
                                         }}
-                                        title={`Event ${i}: ${m.tagName}`}
                                     />
-                                ))}
+                                )}
+
+                                {/* All event markers (faint) */}
+                                {metadata.map(() => {
+                                    return null;
+                                })}
                             </div>
                         )}
-                        {!videoUrl && <div className="text-white flex items-center justify-center h-full">Loading...</div>}
+                        {!videoUrl && <div className="text-white">Loading...</div>}
                     </div>
+
+                    {/* Tooltip */}
+                    {tooltip && (
+                        <div style={{
+                            position: 'fixed',
+                            left: tooltip.x + 10,
+                            top: tooltip.y + 10,
+                            zIndex: 9999,
+                            background: 'rgba(0, 0, 0, 0.8)',
+                            color: 'white',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            pointerEvents: 'none',
+                            whiteSpace: 'nowrap'
+                        }}>
+                            {tooltip.text}
+                        </div>
+                    )}
                 </div>
 
-                {/* Right: Debug Panel */}
                 <div id="debug-side-panel" className="w-80 bg-[#252526] border-l border-[#333] flex flex-col overflow-hidden text-xs text-gray-300">
-
-                    {/* Event Inspector */}
-                    <EventInspector metadata={metadata as unknown as ZoomEvent[]} />
-
-                    {/* Settings & Debug Actions */}
-                    <div className="p-4 bg-[#1e1e1e] flex flex-col gap-4">
-                        <div>
-                            <h2 className="text-sm font-bold text-white mb-2">Editor Settings</h2>
-                            <label className="block text-[10px] text-slate-500 uppercase mb-1">Preview Zoom Intensity</label>
-                            <input
-                                type="range" min="1" max="3" step="0.1"
-                                value={zoomIntensity}
-                                onChange={(e) => setZoomIntensity(parseFloat(e.target.value))}
-                                className="w-full accent-blue-500"
-                            />
-                            <div className="text-right text-[10px] text-gray-400">{zoomIntensity.toFixed(1)}x</div>
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                            <button
-                                onClick={exportVideo}
-                                disabled={isExporting}
-                                className={`w-full py-2 rounded font-medium transition-colors ${isExporting ? 'bg-slate-600' : 'bg-green-600 hover:bg-green-700 text-white'}`}
-                            >
-                                {isExporting ? 'Exporting...' : 'Export Video'}
-                            </button>
-
-                            <button
-                                onClick={exportDebugData}
-                                className="w-full py-2 rounded font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors text-[10px]"
-                            >
-                                Export Debug Data (JSON + Video)
-                            </button>
-
-                            <div className="text-[10px] text-slate-500 text-center mt-2">
-                                Segments: {segments.length} | Dur: {segments.reduce((acc, s) => acc + (s.sourceEnd - s.sourceStart), 0).toFixed(0)}ms
-                            </div>
-                        </div>
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                        <EventInspector metadata={metadata as unknown as ZoomEvent[]} />
+                    </div>
+                    <div className="flex-1 flex flex-col overflow-hidden border-t border-[#333]">
+                        <ZoomInspector
+                            schedule={schedule}
+                            currentTime={recordingStartTime + currentTime}
+                        />
                     </div>
                 </div>
             </div>
 
-            {/* Bottom: Timeline Area */}
             <div id="timeline-container" className="h-64 border-t border-[#333] shrink-0 z-20 bg-[#1e1e1e]">
                 <Timeline />
             </div>
         </div>
     );
-
-
 }
 
 export default Editor;

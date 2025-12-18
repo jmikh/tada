@@ -17,8 +17,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         editor: resolve(__dirname, 'src/editor/index.html'),
         offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),
-        permissions: resolve(__dirname, 'src/permissions/permissions.html'),
-        test_zoom: resolve(__dirname, 'src/test-zoom/index.html')
+        permissions: resolve(__dirname, 'src/permissions/permissions.html')
       },
       output: {},
     },

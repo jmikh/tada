@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { logger } from './utils/logger';
 
 interface RecordingStateResponse {
   isRecording?: boolean;
@@ -77,7 +78,7 @@ function App() {
       const stream = await checkPermission() as MediaStream;
       stream.getTracks().forEach(t => t.stop());
     } catch (err) {
-      console.log("Opening permission helper due to:", err);
+      logger.log("Opening permission helper due to:", err);
       const width = 500;
       const height = 450;
       await chrome.windows.create({

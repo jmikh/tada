@@ -10,10 +10,24 @@ chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
 
 chrome.runtime.onMessage.addListener(async (message) => {
     if (message.type === 'START_RECORDING_OFFSCREEN') {
-        const { streamId, data: { hasAudio, hasCamera, audioDeviceId, videoDeviceId } } = message;
+        const { streamId, data: { hasAudio, hasCamera, audioDeviceId, videoDeviceId, dimensions } } = message;
 
         try {
             // 1. Get Screen Stream (Video + System Audio)
+            const videoConstraints: any = {
+                mandatory: {
+                    chromeMediaSource: 'tab',
+                    chromeMediaSourceId: streamId
+                }
+            };
+
+            if (dimensions) {
+                videoConstraints.mandatory.minWidth = dimensions.width;
+                videoConstraints.mandatory.minHeight = dimensions.height;
+                videoConstraints.mandatory.maxWidth = dimensions.width;
+                videoConstraints.mandatory.maxHeight = dimensions.height;
+            }
+
             const screenStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     mandatory: {
@@ -21,12 +35,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
                         chromeMediaSourceId: streamId
                     }
                 } as any,
-                video: {
-                    mandatory: {
-                        chromeMediaSource: 'tab',
-                        chromeMediaSourceId: streamId
-                    }
-                } as any
+                video: videoConstraints
             });
 
             // 2. Prepare for mixing

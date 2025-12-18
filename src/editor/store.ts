@@ -25,6 +25,7 @@ interface EditorState {
     recordingStartTime: number;
     isExporting: boolean;
     zoomIntensity: number;
+    paddingPercentage: number;
 
     // Timeline State
     segments: Segment[];
@@ -39,6 +40,7 @@ interface EditorState {
     setRecordingStartTime: (time: number) => void;
     setIsExporting: (isExporting: boolean) => void;
     setZoomIntensity: (intensity: number) => void;
+    setPaddingPercentage: (percentage: number) => void;
 
     // Timeline Actions
     initSegments: (durationMs: number) => void;
@@ -53,7 +55,8 @@ export const useEditorStore = create<EditorState>((set) => ({
     metadata: [],
     recordingStartTime: 0,
     isExporting: false,
-    zoomIntensity: 1.0,
+    zoomIntensity: 2.0,
+    paddingPercentage: 0.05,
 
     segments: [],
     maxDuration: 0,
@@ -71,6 +74,7 @@ export const useEditorStore = create<EditorState>((set) => ({
     setRecordingStartTime: (time) => set({ recordingStartTime: time }),
     setIsExporting: (isExporting) => set({ isExporting }),
     setZoomIntensity: (intensity) => set({ zoomIntensity: intensity }),
+    setPaddingPercentage: (percentage) => set({ paddingPercentage: percentage }),
 
     initSegments: (durationMs) => set({
         segments: [{ id: crypto.randomUUID(), sourceStart: 0, sourceEnd: durationMs }],

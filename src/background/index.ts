@@ -1,4 +1,6 @@
-console.log("Background service worker running");
+import { logger } from '../utils/logger';
+
+logger.log("Background service worker running");
 
 interface BackgroundState {
     isRecording: boolean;
@@ -27,12 +29,31 @@ async function setupOffscreenDocument(path: string) {
     });
 }
 
+// On Install/Update: Inject content script into existing tabs
+chrome.runtime.onInstalled.addListener(async () => {
+    console.log("[Background] Extension Installed/Updated. Injecting content scripts...");
+    const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+    for (const tab of tabs) {
+        if (tab.id) {
+            try {
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['src/content/index.ts']
+                });
+                console.log(`[Background] Injected into tab ${tab.id}`);
+            } catch (err) {
+                // Ignore errors (e.g. restricted pages)
+                // console.warn(`[Background] Failed to inject into tab ${tab.id}`, err);
+            }
+        }
+    }
+});
+
 // Event Listener
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // 1. Event Capture
-    if (['CLICK_EVENT', 'MOUSE_POS', 'URL_CHANGE', 'KEYDOWN'].includes(message.type)) {
+    if (['MOUSE_POS', 'URL_CHANGE', 'KEYDOWN', 'MOUSEDOWN', 'MOUSEUP', 'DOM_MUTATION', 'CLICK'].includes(message.type)) {
         if (state.isRecording) {
-            console.log("Storing event:", message.type);
             // Append event type to payload for easy storage
             const eventWithMeta = { ...message.payload, type: message.type.toLowerCase().replace('_event', '') };
 
@@ -41,9 +62,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             // MOUSE_POS -> 'mouse_pos' -> 'mouse'
             // URL_CHANGE -> 'url_change' -> 'url'
             // KEYDOWN -> 'keydown'
+            // DOM_MUTATION -> 'dom_mutation' -> 'mutation'
 
             if (eventWithMeta.type === 'mouse_pos') eventWithMeta.type = 'mouse';
             if (eventWithMeta.type === 'url_change') eventWithMeta.type = 'url';
+            if (eventWithMeta.type === 'dom_mutation') eventWithMeta.type = 'mutation';
 
             state.events.push(eventWithMeta);
 
@@ -85,10 +108,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                     throw new Error("Offscreen recorder timed out.");
                 }
 
+                // 0. Get Tab Dimensions
+                let dimensions = { width: 1920, height: 1080 };
+                try {
+                    const result = await chrome.scripting.executeScript({
+                        target: { tabId },
+                        func: () => ({
+                            width: window.innerWidth,
+                            height: window.innerHeight,
+                            dpr: window.devicePixelRatio
+                        })
+                    });
+                    if (result && result[0] && result[0].result) {
+                        const { width, height, dpr } = result[0].result;
+                        dimensions = { width: Math.round(width * dpr), height: Math.round(height * dpr) };
+                        logger.log(`[Background] Target Tab Dimensions: ${width}x${height} @ ${dpr}x -> ${dimensions.width}x${dimensions.height}`);
+                    }
+                } catch (e) {
+                    logger.warn("[Background] Failed to get tab dimensions, using default.", e);
+                }
+
+
                 await chrome.runtime.sendMessage({
                     type: 'START_RECORDING_OFFSCREEN',
                     streamId,
-                    data: { ...message, hasAudio: message.hasAudio, hasCamera: message.hasCamera }
+                    data: {
+                        ...message,
+                        hasAudio: message.hasAudio,
+                        hasCamera: message.hasCamera,
+                        dimensions // Pass dimensions to offscreen
+                    }
                 });
 
                 state.isRecording = true;
@@ -96,13 +145,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 chrome.storage.local.set({ currentSessionEvents: [] });
 
                 // Notify content script safely
-                console.log("[Background] Sending RECORDING_STATUS_CHANGED=true to tab", tabId);
+                logger.log("[Background] Sending RECORDING_STATUS_CHANGED=true to tab", tabId);
 
                 try {
                     await chrome.tabs.sendMessage(tabId, { type: 'RECORDING_STATUS_CHANGED', isRecording: true });
-                    console.log("[Background] Message sent successfully.");
+                    logger.log("[Background] Message sent successfully.");
                 } catch (err: any) {
-                    console.log("[Background] Message failed. Attempting injection...", err.message);
+                    logger.log("[Background] Message failed. Attempting injection...", err.message);
 
                     try {
                         // Inject the content script manually
@@ -111,21 +160,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                             target: { tabId },
                             files: ['src/content/index.ts']
                         });
-                        console.log("[Background] Injection successful. Retrying message...");
+                        logger.log("[Background] Injection successful. Retrying message...");
 
                         // Give it a moment to initialize listeners
                         await new Promise(r => setTimeout(r, 200));
 
                         await chrome.tabs.sendMessage(tabId, { type: 'RECORDING_STATUS_CHANGED', isRecording: true });
-                        console.log("[Background] Retry message sent successfully.");
+                        logger.log("[Background] Retry message sent successfully.");
                     } catch (injectErr: any) {
-                        console.warn("Could not inject content script. Page might be restricted (e.g. chrome:// URL).", injectErr.message);
+                        logger.warn("Could not inject content script. Page might be restricted (e.g. chrome:// URL).", injectErr.message);
                     }
                 }
 
                 sendResponse({ success: true });
             } catch (err: any) {
-                console.error("Error starting recording:", err);
+                logger.error("Error starting recording:", err);
                 sendResponse({ success: false, error: err.message });
             }
         })();
@@ -146,8 +195,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             });
         });
 
-        // Save final metadata state
-        console.log("[Background] Saving final metadata:", state.events.length, "events");
+        // No post-processing needed as content script handles click/drag details
+        // Sort events by timestamp to ensure chronological order (buffered events might arrive late)
+        state.events.sort((a, b) => a.timestamp - b.timestamp);
+
+        logger.log("[Background] Saving final events:", state.events.length);
         chrome.storage.local.set({ recordingMetadata: state.events });
 
         sendResponse({ success: true });
