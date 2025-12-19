@@ -1,8 +1,8 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditorStore } from './store';
-import { VideoMappingConfig } from '../lib/zoom/videoMappingConfig';
+import { VideoMappingConfig } from '../core/effects/videoMappingConfig';
 import { useProject } from '../hooks/useProject';
-import { ProjectImpl } from '../core/project/Project';
+import { ProjectImpl } from '../core/project/project';
 
 interface PlayerCanvasProps {
     src: string;
@@ -17,8 +17,20 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
     muted = true
 }, ref) => {
     // We need some store values for sizing, but schedule comes from hook
-    const { outputVideoSize, inputVideoSize, paddingPercentage } = useEditorStore();
-    const { project, currentTimeMs, setCurrentTime } = useProject();
+    const { paddingPercentage } = useEditorStore();
+    const { project, currentTimeMs } = useProject();
+
+    // Derived State from Project (for React Render Cycle)
+    const outputVideoSize = project.outputSettings.size;
+    const inputVideoSize = (() => {
+        // TODO: Do not rely on source[0], find the correct active source or main source.
+        const source = Object.values(project.sources)[0];
+        if (!source?.size) {
+            console.error('[PlayerCanvas] project.sources[0].size is missing!', source);
+            return { width: 1920, height: 1080 };
+        }
+        return source.size;
+    })();
 
     // Resolve what to show
     let renderState;
@@ -61,7 +73,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             onLoadedMetadata(e);
         }
         // Initialize canvas size once metadata is loaded
-        if (canvasRef.current) {
+        if (canvasRef.current && outputVideoSize) {
             canvasRef.current.width = outputVideoSize.width;
             canvasRef.current.height = outputVideoSize.height;
 
@@ -89,10 +101,17 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
         if (!ctx) return;
 
         // 1. Fetch Fresh State (Bypass React Closures)
-        const { project, currentTimeMs } = useProject.getState();
-        const { inputVideoSize, outputVideoSize, paddingPercentage } = useEditorStore.getState();
+        const projectState = useProject.getState();
+        const project = projectState.project;
+        const currentTimeMs = projectState.currentTimeMs;
+        const { paddingPercentage } = useEditorStore.getState();
 
-        if (!inputVideoSize) return;
+        // Derive needed sizes from fresh project state
+        const freshOutputSize = project.outputSettings.size;
+        // TODO: Do not rely on source[0], find the correct active source or main source.
+        const freshInputSize = Object.values(project.sources)[0]?.size;
+
+        if (!freshInputSize) return;
 
         // 2. Resolve Active Clip
         let activeClip = null;
@@ -116,8 +135,8 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
 
         // 5. Calculate Draw Dimensions
         const config = new VideoMappingConfig(
-            inputVideoSize,
-            outputVideoSize,
+            freshInputSize,
+            freshOutputSize,
             paddingPercentage
         );
 
@@ -136,7 +155,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
                     drawVideo(video, canvasRef.current);
 
                     // Update UI time (throttle this if performance issues arise)
-                    setCurrentTime(video.currentTime * 1000);
+                    useProject.getState().setCurrentTime(video.currentTime * 1000);
                 }
             }
             animationFrameRef.current = requestAnimationFrame(render);

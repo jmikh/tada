@@ -109,6 +109,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 }
 
                 // 0. Get Tab Dimensions
+                // TODO: figureout how to deal with that error. (analytics?)
                 let dimensions = { width: 1920, height: 1080 };
                 try {
                     const result = await chrome.scripting.executeScript({

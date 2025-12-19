@@ -1,4 +1,4 @@
-import type { Size, Point } from './types';
+import type { Size, Point } from '../types';
 
 interface Box {
     x: number;

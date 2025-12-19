@@ -79,6 +79,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
 
                 const screenVideoTrack = screenStream.getVideoTracks()[0];
                 const { width, height } = screenVideoTrack.getSettings();
+                // TODO: figureout how to deal with that error. (analytics?)
                 canvas.width = width || 1920;
                 canvas.height = height || 1080;
 

@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { PlayerCanvas } from './PlayerCanvas';
-import { useEditorStore, type Metadata } from './store';
+import { useEditorStore } from './store';
 import { Timeline } from './timeline/Timeline';
 import { EventInspector } from './EventInspector';
+import { HoverInspector } from './HoverInspector';
 import { useProject } from '../hooks/useProject';
-import { ProjectImpl } from '../core/project/Project';
-import { TimelineImpl } from '../core/timeline/Timeline';
-import { TrackImpl } from '../core/timeline/Track';
-import { ClipImpl } from '../core/timeline/Clip';
+import { ProjectImpl } from '../core/project/project';
+import { TimelineImpl } from '../core/timeline/timeline';
+import { TrackImpl } from '../core/timeline/track';
+import { ClipImpl } from '../core/timeline/clip';
 import type { Source } from '../core/types';
-import type { ZoomEvent } from '../lib/zoom';
+import type { UserEvent } from '../core/types';
+import { calculateZoomSchedule, VideoMappingConfig } from '../core/effects/zoomPan';
+import { type ZoomConfig } from '../core/types';
 
 
 
@@ -35,17 +38,19 @@ function Editor() {
         setVideoUrl,
         setMetadata,
         setRecordingStartTime,
-        outputVideoSize,
-        inputVideoSize,
-        setInputVideoSize
     } = useEditorStore();
+
+    // Derived State from Project
+    const outputVideoSize = project.outputSettings.size;
+    // TODO: Do not rely on source[0], find the correct active source or main source.
+    const inputVideoSize = Object.values(project.sources)[0]?.size || null;
 
     const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         console.log('Video loaded');
         const video = e.currentTarget;
         const w = video.videoWidth;
         const h = video.videoHeight;
-        setInputVideoSize({ width: w, height: h });
+        // setInputVideoSize({ width: w, height: h }); // REMOVED: Managed by Project Source now
 
         // Initialize Project if empty
         if (project.timeline.tracks.length === 0 && videoUrl) {
@@ -57,15 +62,40 @@ function Editor() {
                 type: 'video',
                 url: videoUrl,
                 durationMs: durationMs,
-                width: w,
-                height: h,
-                hasAudio: true
+                size: { width: w, height: h },
+                hasAudio: true,
+                events: metadata // Attach events to source
             };
 
             let newProject = ProjectImpl.addSource(project, source);
 
             // Create Track
             let track = TrackImpl.create('Main Video', 'video');
+
+            // Generate Camera Motions if metadata exists
+            if (metadata && metadata.length > 0) {
+                // 1. Configs
+                // Use Output Size from Project (default 4K or 1080p)
+                const zoomConfig: ZoomConfig = {
+                    zoomIntensity: 2.0, // Default zoom
+                    zoomDuration: 2000,
+                    zoomOffset: -500
+                };
+
+                const videoMappingConfig = new VideoMappingConfig(
+                    { width: w, height: h }, // Input
+                    outputVideoSize,         // Output (Project Settings)
+                    0                        // padding (default 0 for mapping logic inside motions?) 
+                    // Actually padding is handled by where we place the video? 
+                    // For now assume 0 padding for motion generation context.
+                );
+
+                // 2. Generate
+                const motions = calculateZoomSchedule(zoomConfig, videoMappingConfig, metadata);
+                console.log("Generated Motions:", motions.length);
+
+                track.cameraMotions = motions;
+            }
 
             // Create Clip covering entire duration
             const clip = ClipImpl.create(sourceId, 0, durationMs, 0);
@@ -86,7 +116,7 @@ function Editor() {
     useEffect(() => {
         chrome.storage.local.get(['recordingMetadata'], (result) => {
             if (result.recordingMetadata) {
-                setMetadata(result.recordingMetadata as Metadata[]);
+                setMetadata(result.recordingMetadata as UserEvent[]);
             }
         });
 
@@ -105,7 +135,7 @@ function Editor() {
                     else if (result.timestamp) setRecordingStartTime(result.timestamp);
 
                     if (result.width && result.height) {
-                        setInputVideoSize({ width: result.width, height: result.height });
+                        // setInputVideoSize({ width: result.width, height: result.height }); // Removed: Managed by Project Source now
                     }
                 }
             };
@@ -321,8 +351,21 @@ function Editor() {
                 </div>
 
                 <div id="debug-side-panel" className="w-80 bg-[#252526] border-l border-[#333] flex flex-col overflow-hidden text-xs text-gray-300">
+                    <div className="p-2 border-b border-[#333]">
+                        <button
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                            onClick={() => console.log(project)}
+                        >
+                            Log Project Struct
+                        </button>
+                    </div>
                     <div className="flex-1 flex flex-col overflow-hidden">
-                        <EventInspector metadata={metadata as unknown as ZoomEvent[]} />
+                        <div className="flex-1 flex flex-col overflow-hidden min-h-0 border-b border-[#333]">
+                            <EventInspector metadata={metadata} />
+                        </div>
+                        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+                            <HoverInspector events={metadata} inputSize={inputVideoSize} />
+                        </div>
                     </div>
                 </div>
             </div>

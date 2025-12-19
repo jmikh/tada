@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Clip } from '../../core/types';
-import { ClipImpl } from '../../core/timeline/Clip';
+import { ClipImpl } from '../../core/timeline/clip';
 
 interface TimelineTrackVideoProps {
     clips: Clip[];

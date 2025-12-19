@@ -1,8 +1,8 @@
 
 import { create } from 'zustand';
 import type { Project, ID, TimeMs } from '../core/types';
-import { ProjectImpl } from '../core/project/Project';
-import { TimelineImpl } from '../core/timeline/Timeline';
+import { ProjectImpl } from '../core/project/project';
+import { TimelineImpl } from '../core/timeline/timeline';
 
 interface ProjectState {
     project: Project;

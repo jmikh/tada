@@ -1,36 +1,21 @@
 import { create } from 'zustand';
-
-
-export interface Metadata {
-    timestamp: number;
-    tagName: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
-
+import type { UserEvent } from '../core/types';
 
 interface EditorState {
     videoUrl: string | null;
-    metadata: Metadata[];
+    metadata: UserEvent[];
     recordingStartTime: number;
     isExporting: boolean;
     zoomIntensity: number;
     paddingPercentage: number;
-    outputVideoSize: { width: number; height: number };
-    inputVideoSize: { width: number; height: number } | null;
-
     setVideoUrl: (url: string | null) => void;
-    setMetadata: (metadata: Metadata[]) => void;
-    addMetadataItem: (item: Metadata) => void;
+    setMetadata: (metadata: UserEvent[]) => void;
+    addMetadataItem: (item: UserEvent) => void;
     removeMetadataItem: (index: number) => void;
     setRecordingStartTime: (time: number) => void;
     setIsExporting: (isExporting: boolean) => void;
     setZoomIntensity: (intensity: number) => void;
     setPaddingPercentage: (percentage: number) => void;
-    setOutputVideoSize: (size: { width: number; height: number }) => void;
-    setInputVideoSize: (size: { width: number; height: number }) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -40,9 +25,6 @@ export const useEditorStore = create<EditorState>((set) => ({
     isExporting: false,
     zoomIntensity: 2.0,
     paddingPercentage: 0.05,
-    outputVideoSize: { width: 3840, height: 2160 },
-    inputVideoSize: null,
-
     setVideoUrl: (url) => set({ videoUrl: url }),
     setMetadata: (metadata) => set({ metadata }),
     addMetadataItem: (item) => set((state) => ({
@@ -55,6 +37,4 @@ export const useEditorStore = create<EditorState>((set) => ({
     setIsExporting: (isExporting) => set({ isExporting }),
     setZoomIntensity: (intensity) => set({ zoomIntensity: intensity }),
     setPaddingPercentage: (percentage) => set({ paddingPercentage: percentage }),
-    setOutputVideoSize: (size) => set({ outputVideoSize: size }),
-    setInputVideoSize: (size) => set({ inputVideoSize: size }),
 }));

@@ -1,4 +1,5 @@
-import { calculateZoomSchedule, type ZoomConfig, type ZoomEvent, VideoMappingConfig } from './index';
+import { calculateZoomSchedule, VideoMappingConfig } from './zoomPan';
+import type { ZoomConfig, UserEvent } from '../types';
 
 function assertStrictEqual(a: any, b: any, msg?: string) {
     if (a !== b) {
@@ -24,7 +25,7 @@ const inputVideoHeight = 2000;
 const zoom = 2;
 
 // Events
-const events: ZoomEvent[] = [
+const events: UserEvent[] = [
     {
         type: 'click',
         timestamp: 1000,
@@ -62,63 +63,59 @@ function runTest(paddingPercentage: number, scenarioName: string) {
 
     console.log("--- Generated Schedule ---");
     schedule.forEach((k, i) => {
-        console.log(`Keyframe #${i}: timestamp=${k.timestamp}`);
-        console.log(`  ZoomBox: x=${k.zoomBox.x}, y=${k.zoomBox.y}, w=${k.zoomBox.width}, h=${k.zoomBox.height}`);
+        console.log(`Motion #${i}: timeOut=${k.timeOutMs}`);
+        console.log(`  Target: x=${k.target.x}, y=${k.target.y}, w=${k.target.width}, h=${k.target.height}`);
     });
 
     console.log("--- Running Assertions ---");
 
-    assert.strictEqual(schedule.length, 4, "Should have 4 keyframes (Initial + 3 Clicks)");
-
-    // Keyframe 0: Initial State (Full View)
-    assert.strictEqual(schedule[0].timestamp, 0);
-    assert.deepStrictEqual(schedule[0].zoomBox, { x: 0, y: 0, width: 1000, height: 1000 }, "Keyframe 0 mismatch");
+    assert.strictEqual(schedule.length, 3, "Should have 3 motions (1 per Click)");
 
     if (paddingPercentage === 0) {
         // --- NO PADDING CASE (Standard) ---
 
-        // Keyframe 1: Top Left Click (0,0) -> Output (0,0)
+        // Motion 0: Top Left Click (0,0) -> Output (0,0)
         // Box TopLeft: -250 -> Clamped to 0.
-        assert.strictEqual(schedule[1].zoomBox.x, 0, "K1 X incorrect");
-        assert.strictEqual(schedule[1].zoomBox.y, 0, "K1 Y incorrect");
+        assert.strictEqual(schedule[0].target.x, 0, "M0 X incorrect");
+        assert.strictEqual(schedule[0].target.y, 0, "M0 Y incorrect");
 
-        // Keyframe 2: Center Click (1000,1000) -> Output (500,500)
+        // Motion 1: Center Click (1000,1000) -> Output (500,500)
         // Box TopLeft: 500 - 250 = 250.
-        assert.strictEqual(schedule[2].zoomBox.x, 250, "K2 X incorrect");
-        assert.strictEqual(schedule[2].zoomBox.y, 250, "K2 Y incorrect");
+        assert.strictEqual(schedule[1].target.x, 250, "M1 X incorrect");
+        assert.strictEqual(schedule[1].target.y, 250, "M1 Y incorrect");
 
-        // Keyframe 3: Bottom Right Click (2000,2000) -> Output (1000,1000)
+        // Motion 2: Bottom Right Click (2000,2000) -> Output (1000,1000)
         // Box TopLeft: 1000 - 250 = 750.
         // Clamped MaxX = 1000 - 500 = 500.
-        assert.strictEqual(schedule[3].zoomBox.x, 500, "K3 X incorrect");
-        assert.strictEqual(schedule[3].zoomBox.y, 500, "K3 Y incorrect");
+        assert.strictEqual(schedule[2].target.x, 500, "M2 X incorrect");
+        assert.strictEqual(schedule[2].target.y, 500, "M2 Y incorrect");
 
     } else if (paddingPercentage === 0.1) {
         // --- PADDING CASE (10%) ---
         // Video Rect: x=100, y=100, w=800, h=800.
         // Scale: 2000 / 800 = 2.5.
 
-        // Keyframe 1: Top Left Click (0,0) -> Output (100, 100)
+        // Motion 0: Top Left Click (0,0) -> Output (100, 100)
         // Box TopLeft: 100 - 250 = -150.
         // Clamped to 0.
         // Wait!
         // X: 100. Center=100. BoxW=500. TopLeft=100-250 = -150. Clamped to 0?
         // Logic: Math.max(0, Math.min(-150, 1000-500)).
         // -150 < 0 => 0. Correct.
-        assert.strictEqual(schedule[1].zoomBox.x, 0, "K1 X incorrect");
-        assert.strictEqual(schedule[1].zoomBox.y, 0, "K1 Y incorrect");
+        assert.strictEqual(schedule[0].target.x, 0, "M0 X incorrect");
+        assert.strictEqual(schedule[0].target.y, 0, "M0 Y incorrect");
 
-        // Keyframe 2: Center Click (1000,1000) -> Output (100 + 400, 100 + 400) = (500, 500)
+        // Motion 1: Center Click (1000,1000) -> Output (100 + 400, 100 + 400) = (500, 500)
         // Box TopLeft: 500 - 250 = 250.
-        assert.strictEqual(schedule[2].zoomBox.x, 250, "K2 X incorrect");
-        assert.strictEqual(schedule[2].zoomBox.y, 250, "K2 Y incorrect");
+        assert.strictEqual(schedule[1].target.x, 250, "M1 X incorrect");
+        assert.strictEqual(schedule[1].target.y, 250, "M1 Y incorrect");
 
-        // Keyframe 3: Bottom Right Click (2000,2000) -> Output (100 + 800, 100 + 800) = (900, 900)
+        // Motion 2: Bottom Right Click (2000,2000) -> Output (100 + 800, 100 + 800) = (900, 900)
         // Box TopLeft: 900 - 250 = 650.
         // MaxX = 500.
         // 650 > 500 => 500.
-        assert.strictEqual(schedule[3].zoomBox.x, 500, "K3 X incorrect");
-        assert.strictEqual(schedule[3].zoomBox.y, 500, "K3 Y incorrect");
+        assert.strictEqual(schedule[2].target.x, 500, "M2 X incorrect");
+        assert.strictEqual(schedule[2].target.y, 500, "M2 Y incorrect");
 
         // Test Bounding Box Projection for Padding Case
         console.log("--- Testing Bounding Box Projection (Padding) ---");
@@ -134,9 +131,9 @@ function runTest(paddingPercentage: number, scenarioName: string) {
     }
 
     // Common Width/Height Assertions
-    for (let i = 1; i < 4; i++) {
-        assert.strictEqual(schedule[i].zoomBox.width, 500, `K${i} Width incorrect`);
-        assert.strictEqual(schedule[i].zoomBox.height, 500, `K${i} Height incorrect`);
+    for (let i = 0; i < 3; i++) {
+        assert.strictEqual(schedule[i].target.width, 500, `M${i} Width incorrect`);
+        assert.strictEqual(schedule[i].target.height, 500, `M${i} Height incorrect`);
     }
     console.log("  ✅ Verified ZoomBox Dimensions (500x500)");
 

@@ -1,5 +1,5 @@
 import type { Track, Clip, TimeMs } from '../types';
-import { ClipImpl } from './Clip';
+import { ClipImpl } from './clip';
 
 /**
  * Functional logic for Track operations.
@@ -15,10 +15,23 @@ export class TrackImpl {
             type,
             name,
             clips: [],
-            effects: [],
+            cameraMotions: [],
             muted: false,
             locked: false,
-            visible: true
+            visible: true,
+            displaySettings: {
+                mode: 'fullscreen',
+                fullscreen: {
+                    backgroundColor: '#000000',
+                    padding: 0
+                },
+                overlay: {
+                    shape: 'rectangle',
+                    borderRadius: 0,
+                    borderThickness: 0,
+                    borderColor: '#ffffff'
+                }
+            }
         };
     }
 

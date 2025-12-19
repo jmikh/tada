@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react'
 import { useProject } from '../../hooks/useProject';
 import { TimelineRuler } from './TimelineRuler';
 import { TimelineTrackVideo } from './TimelineTrackVideo';
+import { TimelineTrackCameraMotions } from './TimelineTrackCameraMotions';
 import type { Clip } from '../../core/types';
 
 // Constants
@@ -261,13 +262,20 @@ export function Timeline() {
                     <div className="py-2 flex flex-col gap-1">
 
                         {videoTracks.map(track => (
-                            <TimelineTrackVideo
-                                key={track.id}
-                                clips={track.clips}
-                                pixelsPerSec={pixelsPerSec}
-                                trackHeight={TRACK_HEIGHT}
-                                onDragStart={handleDragStart}
-                            />
+                            <div key={track.id} className="flex flex-col">
+                                <TimelineTrackVideo
+                                    clips={track.clips}
+                                    pixelsPerSec={pixelsPerSec}
+                                    trackHeight={TRACK_HEIGHT}
+                                    onDragStart={handleDragStart}
+                                />
+                                {track.cameraMotions && track.cameraMotions.length > 0 && (
+                                    <TimelineTrackCameraMotions
+                                        motions={track.cameraMotions}
+                                        pixelsPerSec={pixelsPerSec}
+                                    />
+                                )}
+                            </div>
                         ))}
                     </div>
 

@@ -1,7 +1,7 @@
 
 import type { Project, ID, TimeMs, Source } from '../types';
-import { TimelineImpl } from '../timeline/Timeline';
-import { TrackImpl } from '../timeline/Track';
+import { TimelineImpl } from '../timeline/timeline';
+import { TrackImpl } from '../timeline/track';
 
 /**
  * Represents the resolved state of the timeline at a specific point in time.
@@ -37,8 +37,7 @@ export class ProjectImpl {
             sources: {},
             timeline: TimelineImpl.create(),
             outputSettings: {
-                width: 1920,
-                height: 1080,
+                size: { width: 3840, height: 2160 },
                 frameRate: 30
             }
         };

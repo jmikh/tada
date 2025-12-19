@@ -15,7 +15,7 @@ let lastMouseX = 0;
 let lastMouseY = 0;
 let lastMouseTime = 0;
 let recordingStartTime = 0;
-const MOUSE_POLL_INTERVAL = 500;
+const MOUSE_POLL_INTERVAL = 100;
 
 // Listen for recording state changes from background
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {

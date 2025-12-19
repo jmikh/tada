@@ -11,6 +11,11 @@ export type ID = string;
  */
 export type TimeMs = number;
 
+export interface Size {
+    width: number;
+    height: number;
+}
+
 // ==========================================
 // PROJECT
 // ==========================================
@@ -43,8 +48,7 @@ export interface Project {
  * Configuration for the final video output.
  */
 export interface OutputSettings {
-    width: number;
-    height: number;
+    size: Size;
     frameRate: number;
     // We can add bitrate/etc later
 }
@@ -66,11 +70,11 @@ export interface Source {
     // Metadata
     /** Total duration of the source file in milliseconds */
     durationMs: TimeMs;
-    width: number;
-    height: number;
+    size: Size;
     /** Frames Per Second (Video only) */
     fps?: number;
     hasAudio: boolean;
+    events?: UserEvent[];
 }
 
 // ==========================================
@@ -109,13 +113,19 @@ export interface Track {
      */
     clips: Clip[];
 
-    /** Effects representing global transformations on this track */
-    effects: TrackEffect[];
+    /** 
+     * List of camera motions (zoom/pan) applied to this track.
+     * These define "camera" movement over time.
+     */
+    cameraMotions: CameraMotion[];
 
     // State
     muted: boolean;
     locked: boolean;
     visible: boolean;
+
+    /** Visual settings for how the clip is rendered */
+    displaySettings: DisplaySettings;
 }
 
 // ==========================================
@@ -157,37 +167,106 @@ export interface Clip {
     audioMuted: boolean;
 }
 
+export interface DisplaySettings {
+    mode: 'fullscreen' | 'overlay';
+    fullscreen: {
+        backgroundColor: string;
+        padding: number; // Proportional padding (0.0 to 1.0)
+    };
+    overlay: {
+        shape: 'circle' | 'square' | 'rectangle';
+        borderRadius: number;
+        borderThickness: number;
+        borderColor: string;
+    };
+}
+
 // ==========================================
-// EFFECT
+// CAMERA MOTIONS
 // ==========================================
 
 export type EasingType = 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out';
 
 /**
- * An effect applied to a Track.
+ * Defines a camera movement/state over time.
+ * "Camera Motion" model: The camera moves from its previous state to the 'target' state
+ * starting at 'timeInMs' and arriving at 'timeOutMs'.
  */
-export interface TrackEffect {
+export interface CameraMotion {
     id: ID;
-    type: 'zoom_pan';
-    // Potential for other types: 'color_grade', 'opacity', etc.
+    /** Start of the zoom/pan interpolation */
+    timeInMs: TimeMs;
+    /** End of the zoom/pan interpolation (arrival at target) */
+    timeOutMs: TimeMs;
 
-    keyframes: Keyframe[];
-}
+    /** The target viewport (camera frame) in source coordinates */
+    target: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
 
-/**
- * A point in time defining a property value for animation.
- */
-export interface Keyframe {
-    id: ID;
-    /** Time on the TIMELINE when this keyframe occurs */
-    timeMs: TimeMs;
     easing: EasingType;
-
-    // Value (Structure depends on Effect Type)
-    // For ZoomPan:
-    value: {
-        x: number;      // Center X 
-        y: number;      // Center Y
-        scale: number;  // Zoom Level
-    }
 }
+
+// ==========================================
+// USER EVENTS DURING RECORDING
+// ==========================================
+
+export interface Point { x: number; y: number; }
+// Size is already defined above
+
+export interface BaseEvent {
+    timestamp: number;
+}
+
+export interface ClickEvent extends BaseEvent {
+    type: 'click';
+    x: number;
+    y: number;
+    tagName?: string;
+}
+
+export interface MouseEvent extends BaseEvent {
+    type: 'mouse';
+    x: number;
+    y: number;
+}
+
+export interface UrlEvent extends BaseEvent {
+    type: 'url';
+    url: string;
+}
+
+export interface KeystrokeEvent extends BaseEvent {
+    type: 'keydown';
+    key: string;
+    code: string;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+    tagName?: string;
+}
+
+export interface MouseDownEvent extends BaseEvent {
+    type: 'mousedown';
+    x: number;
+    y: number;
+}
+
+export interface MouseUpEvent extends BaseEvent {
+    type: 'mouseup';
+    x: number;
+    y: number;
+}
+
+export type UserEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent;
+
+export interface ZoomConfig {
+    zoomIntensity: number; // Global zoom setting (e.g. 1.0)
+    zoomDuration: number; // Duration of validity (e.g. 2000ms)
+    zoomOffset: number;   // Start time relative to event timestamp (e.g. -2000ms starts 2s before)
+}
+
