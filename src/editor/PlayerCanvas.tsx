@@ -1,6 +1,7 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditorStore } from './store';
 import { VideoMappingConfig } from '../core/effects/videoMappingConfig';
+import { getCameraStateAtTime } from '../core/effects/cameraMotion';
 import { useProject } from '../hooks/useProject';
 import { ProjectImpl } from '../core/project/project';
 
@@ -9,12 +10,14 @@ interface PlayerCanvasProps {
     onLoadedMetadata?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
     className?: string;
     muted?: boolean;
+    debugCameraMode?: 'active' | 'visualize';
 }
 
 export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
     src,
     onLoadedMetadata,
-    muted = true
+    muted = true,
+    debugCameraMode = 'active'
 }, ref) => {
     // We need some store values for sizing, but schedule comes from hook
     const { paddingPercentage } = useEditorStore();
@@ -113,12 +116,19 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
 
         if (!freshInputSize) return;
 
-        // 2. Resolve Active Clip
+        // 2. Resolve Active Clip & Track
         let activeClip = null;
+        let activeTrackMotions = null;
         try {
             const renderState = ProjectImpl.getRenderState(project, currentTimeMs);
             const activeTrackItem = renderState.tracks.find(t => t.clip);
             activeClip = activeTrackItem?.clip;
+
+            // Find the original track to access motions (assuming renderState might not have them, or just to be safe)
+            if (activeTrackItem) {
+                const fullTrack = project.timeline.tracks.find(t => t.id === activeTrackItem.trackId);
+                activeTrackMotions = fullTrack?.cameraMotions;
+            }
         } catch { /* ignore render errors to prevent crash loop */ }
 
         // 3. Clear Screen if No Active Clip
@@ -142,9 +152,53 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 6. Draw the Frame
+        // 6. Calculate Camera State (Source Zoom)
+        // We want the camera state at the current TIMELINE time relative to the track/clip? 
+        // `activeClip` gives us the scheduled clip.
+        // `cameraMotion.ts` logic takes `timeMs` and `motions`.
+        // The `motions` are defined on the TRACK timeline (global timeline time).
+        // So we pass `currentTimeMs`.
+
+        const sourceRect = getCameraStateAtTime(
+            activeTrackMotions || [],
+            currentTimeMs,
+            freshInputSize
+        );
+
+        // 7. Draw the Frame
+        // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
+
         const { x, y, width, height } = config.projectedBox;
-        ctx.drawImage(video, x, y, width, height);
+
+        if (debugCameraMode === 'visualize') {
+            // A. Full Picture + Rectangle
+            // 1. Draw full video to fit canvas
+            ctx.drawImage(video, x, y, width, height);
+
+            // 2. Draw Debug Rect
+            // sourceRect is in Source Coordinates. We need to project it to Canvas Coordinates.
+            // Canvas "full" area is defined by projectedBox (x, y, width, height).
+            // Scale factors:
+            const scaleX = width / freshInputSize.width;
+            const scaleY = height / freshInputSize.height;
+
+            const rectX = x + sourceRect.x * scaleX;
+            const rectY = y + sourceRect.y * scaleY;
+            const rectW = sourceRect.width * scaleX;
+            const rectH = sourceRect.height * scaleY;
+
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(rectX, rectY, rectW, rectH);
+
+        } else {
+            // B. Actual Camera Zoom
+            ctx.drawImage(
+                video,
+                sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height,
+                x, y, width, height
+            );
+        }
     };
 
     const startRenderLoop = () => {
