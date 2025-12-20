@@ -192,7 +192,7 @@ export function calculateZoomSchedule(
         if (nextEvt && nextEvt.timestamp < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
             // Stay zoomed
         } else {
-            // Zoom OUT to full view (Output Space)
+            // Zoom out to full view
             const fullView: Rect = {
                 x: 0, y: 0,
                 width: viewTransform.outputVideoSize.width,
@@ -218,8 +218,6 @@ export function calculateZoomSchedule(
 // ============================================================================
 // Runtime Execution / Interpolation
 // ============================================================================
-
-
 
 /*
  * Calculates the current CameraWindow (in Output Space)
