@@ -1,19 +1,14 @@
 import type { ClickEvent, ZoomConfig, UserEvent, CameraMotion, Size, MouseEvent } from '../types';
-import { VideoMappingConfig } from './videoMappingConfig';
+import { ViewTransform } from './viewTransform';
 
 // export * from './types'; // Removed as types are now in core
-export * from './videoMappingConfig';
+export * from './viewTransform';
 
 // ============================================================================
 // Core Abstractions
 // ============================================================================
 
-interface Box {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
+// Box interface removed
 
 export interface HoverBlock {
     startTime: number;
@@ -119,7 +114,7 @@ export function findHoverBlocks(
 
 export function calculateZoomSchedule(
     config: ZoomConfig,
-    mappingConfig: VideoMappingConfig,
+    mappingConfig: ViewTransform, // Kept for signature compatibility
     events: UserEvent[]
 ): CameraMotion[] {
     const motions: CameraMotion[] = [];
@@ -129,22 +124,17 @@ export function calculateZoomSchedule(
         .filter((e): e is ClickEvent => e.type === 'click')
         .sort((a, b) => a.timestamp - b.timestamp);
 
-    // Initial Full View
-
-
     if (clickEvents.length === 0) {
         return motions;
     }
 
-    // 3. Prepare for Zoom Level Calculation
-    const zoomLevel = config.zoomIntensity; // e.g. 2.0
-    const zoomBoxSize: Size = {
-        width: mappingConfig.outputVideoSize.width / zoomLevel,
-        height: mappingConfig.outputVideoSize.height / zoomLevel
-    };
+    // 2. Prepare for Zoom Level Calculation (Source Space)
+    // We assume 'zoomIntensity' means "Scale Factor relative to full view".
+    const zoomLevel = config.zoomIntensity;
 
-    // 4. Iterate Events and Generate Motions
-    let lastTime = 0;
+    // Derived Crop Dimensions in Source Coordinates
+    const baseCropWidth = mappingConfig.inputVideoSize.width / zoomLevel;
+    const baseCropHeight = mappingConfig.inputVideoSize.height / zoomLevel;
 
     // Default duration for a zoom "scene" around a click
     const ZOOM_HOLD_DURATION = config.zoomDuration || 2000;
@@ -153,42 +143,29 @@ export function calculateZoomSchedule(
     for (let i = 0; i < clickEvents.length; i++) {
         const evt = clickEvents[i];
 
-        // Calculate Target Box
-        const centerOfInterest = mappingConfig.projectInputToOutput({
-            x: evt.x,
-            y: evt.y
-        });
-
-        let newBox: Box = {
-            x: centerOfInterest.x - zoomBoxSize.width / 2,
-            y: centerOfInterest.y - zoomBoxSize.height / 2,
-            width: zoomBoxSize.width,
-            height: zoomBoxSize.height
+        // Calculate Target Box (Centered on Click, in SOURCE COORDINATES)
+        let newBox: Rect = {
+            x: evt.x - baseCropWidth / 2,
+            y: evt.y - baseCropHeight / 2,
+            width: baseCropWidth,
+            height: baseCropHeight
         };
 
-        // Shift-Clamping
+        // Shift-Clamping (Stay within Source Video)
         if (newBox.x < 0) newBox.x = 0;
-        else if (newBox.x > mappingConfig.outputVideoSize.width - newBox.width) {
-            newBox.x = mappingConfig.outputVideoSize.width - newBox.width;
+        else if (newBox.x > mappingConfig.inputVideoSize.width - newBox.width) {
+            newBox.x = mappingConfig.inputVideoSize.width - newBox.width;
         }
 
         if (newBox.y < 0) newBox.y = 0;
-        else if (newBox.y > mappingConfig.outputVideoSize.height - newBox.height) {
-            newBox.y = mappingConfig.outputVideoSize.height - newBox.height;
+        else if (newBox.y > mappingConfig.inputVideoSize.height - newBox.height) {
+            newBox.y = mappingConfig.inputVideoSize.height - newBox.height;
         }
 
         // Timing Logic
-        // Zoom IN starts before click
-        const timeIn = Math.max(lastTime, evt.timestamp - ZOOM_TRANSITION_DURATION); // Start zooming in 500ms before click
+        const timeIn = Math.max(0, evt.timestamp - ZOOM_TRANSITION_DURATION);
 
-        // We arrive at target exactly at click time? Or slightly before?
-        // Let's say we want to arrive AT the click.
-        // So motion is from [timeIn, evt.timestamp] -> Interpolating from "Previous State" to "Target State".
-        // But CameraMotion struct defines a "State" that applies *from* timeIn *to* timeOut?
-        // No, `CameraMotion` defines an interpolation: "The camera moves... starting at timeIn and arriving at timeOut".
-
-        // So at `timeOutMs` we are technically AT the `target`.
-
+        // We arrive at target exactly at click time
         const arrivalTime = evt.timestamp;
 
         motions.push({
@@ -199,32 +176,21 @@ export function calculateZoomSchedule(
             easing: 'ease_in_out'
         });
 
-        // Hold the zoom for valid duration?
-        // Next event might be soon.
+        // Hold the zoom
         const nextEvt = clickEvents[i + 1];
         const holdUntil = arrivalTime + ZOOM_HOLD_DURATION;
 
-        // Determine when we must leave this zoom.
-        // If next click is close, we might transition directly.
-        // If next click is far, we zoom OUT to full view.
-
         if (nextEvt && nextEvt.timestamp < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
-            // Too close to zoom out and back in.
-            // Just stay here until next zoom starts.
-            lastTime = arrivalTime;
+            // Stay zoomed
         } else {
             // Zoom OUT to full view
-            // But we need a motion for that?
-            // If we want to return to full view, we add a motion targeting the Full View.
-
-            // Full View Box
-            const fullView: Box = {
+            const fullView: Rect = {
                 x: 0, y: 0,
-                width: mappingConfig.outputVideoSize.width,
-                height: mappingConfig.outputVideoSize.height
+                width: mappingConfig.inputVideoSize.width,
+                height: mappingConfig.inputVideoSize.height
             };
 
-            const zoomOutStart = Math.max(arrivalTime + 1000, arrivalTime + 500); // Wait at least 500ms
+            const zoomOutStart = Math.max(arrivalTime + 1000, arrivalTime + 500);
             const zoomOutEnd = zoomOutStart + ZOOM_TRANSITION_DURATION;
 
             motions.push({
@@ -234,8 +200,6 @@ export function calculateZoomSchedule(
                 target: fullView,
                 easing: 'ease_in_out'
             });
-
-            lastTime = zoomOutEnd;
         }
     }
 

@@ -1,8 +1,8 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditorStore } from './store';
-import { VideoMappingConfig } from '../core/effects/videoMappingConfig';
+import { ViewTransform } from '../core/effects/viewTransform';
 import { getCameraStateAtTime } from '../core/effects/cameraMotion';
-import { drawMouseEffects } from '../core/effects/mouseEffects';
+import { drawMouseEffects } from './painters/mousePainter';
 import { useProject } from '../hooks/useProject';
 import { ProjectImpl } from '../core/project/project';
 
@@ -147,7 +147,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
         }
 
         // 5. Calculate Draw Dimensions
-        const config = new VideoMappingConfig(
+        const config = new ViewTransform(
             freshInputSize,
             freshOutputSize,
             paddingPercentage
@@ -231,7 +231,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
                 activeTrackMouseEffects,
                 currentTimeMs,
                 effectiveSourceRect,
-                { x, y, width, height } // destRect (projectedBox)
+                config
             );
         }
     };

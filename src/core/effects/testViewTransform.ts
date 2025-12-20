@@ -1,4 +1,4 @@
-import { VideoMappingConfig } from './videoMappingConfig';
+import { ViewTransform } from './viewTransform';
 
 function assert(condition: boolean, msg: string) {
     if (!condition) {
@@ -10,12 +10,12 @@ function assert(condition: boolean, msg: string) {
 }
 
 function runTests() {
-    console.log("Starting VideoMappingConfig Tests...\n");
+    console.log("Starting ViewTransform Tests...\n");
 
     // Case 1: Exact Match (1:1)
     {
         console.log("--- Case 1: 1000x1000 Output, 2000x2000 Input (2x Zoom) ---");
-        const config = new VideoMappingConfig(
+        const config = new ViewTransform(
             { width: 2000, height: 2000 },
             { width: 1000, height: 1000 },
             0
@@ -32,7 +32,10 @@ function runTests() {
 
         // Point Projection
         // Input (1000, 1000) -> Output (500, 500)
-        const p = config.projectInputToOutput({ x: 1000, y: 1000 });
+        // We use project() with valid visibleSourceRect (Full View)
+        const fullRect = { x: 0, y: 0, width: 2000, height: 2000 };
+        const p = config.project({ x: 1000, y: 1000 }, fullRect);
+
         assert(p.x === 500, "Point X 1000->500");
         assert(p.y === 500, "Point Y 1000->500");
     }
@@ -40,7 +43,7 @@ function runTests() {
     // Case 2: Letterboxing (Input is wider than Output aspect ratio)
     {
         console.log("\n--- Case 2: Letterboxing (Input 2000x1000, Output 1000x1000) ---");
-        const config2 = new VideoMappingConfig(
+        const config2 = new ViewTransform(
             { width: 2000, height: 1000 }, // Input (The Wide Recording)
             { width: 1000, height: 1000 }, // Output (The Square Video)
             0
@@ -56,7 +59,7 @@ function runTests() {
     {
         console.log("\n--- Case 3: Padding 10% (Input 1000x1000, Output 1000x1000) ---");
         const padding = 0.1;
-        const config3 = new VideoMappingConfig(
+        const config3 = new ViewTransform(
             { width: 1000, height: 1000 },
             { width: 1000, height: 1000 },
             padding

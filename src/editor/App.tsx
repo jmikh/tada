@@ -11,7 +11,8 @@ import { TrackImpl } from '../core/timeline/track';
 import { ClipImpl } from '../core/timeline/clip';
 import type { Source } from '../core/types';
 import type { UserEvent } from '../core/types';
-import { calculateZoomSchedule, VideoMappingConfig } from '../core/effects/cameraMotion';
+import { ViewTransform } from '../core/effects/viewTransform';
+import { calculateZoomSchedule } from '../core/effects/cameraMotion';
 import { generateMouseEffects } from '../core/effects/mouseEffects';
 import { type ZoomConfig } from '../core/types';
 
@@ -84,7 +85,7 @@ function Editor() {
                     zoomOffset: -500
                 };
 
-                const videoMappingConfig = new VideoMappingConfig(
+                const videoMappingConfig = new ViewTransform(
                     { width: w, height: h }, // Input
                     outputVideoSize,         // Output (Project Settings)
                     0                        // padding (default 0 for mapping logic inside motions?) 
