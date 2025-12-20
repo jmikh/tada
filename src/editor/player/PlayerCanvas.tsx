@@ -1,9 +1,10 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { useEditorStore } from '../store';
+// import { useEditorStore } from '../store'; // Unused now
 import { ViewTransform } from '../../core/effects/viewTransform';
 import { getCameraStateAtTime } from '../../core/effects/cameraMotion';
 import { drawMouseEffects } from './mousePainter';
-import { useProject } from '../../hooks/useProject';
+import { useProjectStore, useProjectData } from '../stores/useProjectStore';
+import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { ProjectImpl } from '../../core/project/project';
 
 interface PlayerCanvasProps {
@@ -21,16 +22,22 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
     debugCameraMode = 'active'
 }, ref) => {
     // We need some store values for sizing, but schedule comes from hook
-    const { paddingPercentage } = useEditorStore();
-    const { project, currentTimeMs } = useProject();
+    // const { paddingPercentage } = useEditorStore(); // REMOVED
+    const project = useProjectData();
+    const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
+    const paddingPercentage = project?.timeline?.mainTrack?.displaySettings?.fullscreen?.padding || 0;
 
     // Derived State from Project (for React Render Cycle)
-    const outputVideoSize = project.outputSettings.size;
+    const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
     const inputVideoSize = (() => {
         // TODO: Do not rely on source[0], find the correct active source or main source.
-        const source = Object.values(project.sources)[0];
+        const sources = project?.sources || {};
+        const source = Object.values(sources)[0];
         if (!source?.size) {
-            console.error('[PlayerCanvas] project.sources[0].size is missing!', source);
+            // Only warn if we actually have sources but no size (unexpected)
+            if (Object.keys(sources).length > 0) {
+                console.error('[PlayerCanvas] project.sources[0].size is missing!', source);
+            }
             return { width: 1920, height: 1080 };
         }
         return source.size;
@@ -105,15 +112,15 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
         if (!ctx) return;
 
         // 1. Fetch Fresh State (Bypass React Closures)
-        const projectState = useProject.getState();
-        const project = projectState.project;
-        const currentTimeMs = projectState.currentTimeMs;
-        const { paddingPercentage } = useEditorStore.getState();
+        const project = useProjectStore.getState().project;
+        const currentTimeMs = usePlaybackStore.getState().currentTimeMs;
+        const paddingPercentage = project.timeline.mainTrack.displaySettings.fullscreen.padding;
 
         // Derive needed sizes from fresh project state
         const freshOutputSize = project.outputSettings.size;
         // TODO: Do not rely on source[0], find the correct active source or main source.
-        const freshInputSize = Object.values(project.sources)[0]?.size;
+        const freshSource = Object.values(project.sources || {})[0];
+        const freshInputSize = freshSource?.size;
 
         if (!freshInputSize) return;
 
@@ -128,7 +135,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
 
             // Find the original track to access motions (assuming renderState might not have them, or just to be safe)
             if (activeTrackItem) {
-                const fullTrack = project.timeline.tracks.find(t => t.id === activeTrackItem.trackId);
+                const fullTrack = project.timeline.mainTrack;
                 activeTrackMotions = fullTrack?.cameraMotions;
                 activeTrackMouseEffects = fullTrack?.mouseEffects;
             }
@@ -233,7 +240,7 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
                     drawVideo(video, canvasRef.current);
 
                     // Update UI time (throttle this if performance issues arise)
-                    useProject.getState().setCurrentTime(video.currentTime * 1000);
+                    usePlaybackStore.getState().setCurrentTime(video.currentTime * 1000);
                 }
             }
             animationFrameRef.current = requestAnimationFrame(render);

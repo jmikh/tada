@@ -21,6 +21,7 @@ export class TrackImpl {
             visible: true,
             displaySettings: {
                 mode: 'fullscreen',
+                maxZoom: 1.0,
                 fullscreen: {
                     backgroundColor: '#000000',
                     padding: 0

@@ -1,5 +1,7 @@
 import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
-import { useProject } from '../../hooks/useProject';
+// import { useProject } from '../../hooks/useProject'; // REMOVED
+import { useProjectStore, useProjectTimeline } from '../stores/useProjectStore';
+import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { TimelineRuler } from './TimelineRuler';
 import { TimelineTrackVideo } from './TimelineTrackVideo';
 import { TimelineTrackCameraMotions } from './TimelineTrackCameraMotions';
@@ -18,15 +20,15 @@ export function Timeline() {
     // Actually using store for isPlaying/currentTime since App.tsx might still drive it separately?
     // Plan said "Subsribe to useProject".
     // useProject has currentTimeMs and isPlaying.
-    const {
-        project,
-        currentTimeMs,
-        isPlaying,
-        setCurrentTime,
-        setIsPlaying,
-        splitAt,
-        updateClip
-    } = useProject();
+    // -- Stores --
+    const timeline = useProjectTimeline();
+    const splitAt = useProjectStore(s => s.splitAt);
+    const updateClip = useProjectStore(s => s.updateClip);
+
+    const isPlaying = usePlaybackStore(s => s.isPlaying);
+    const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
+    const setIsPlaying = usePlaybackStore(s => s.setIsPlaying);
+    const setCurrentTime = usePlaybackStore(s => s.setCurrentTime);
 
     // Zoom Level (Timeline Scale)
     const [pixelsPerSec, setPixelsPerSec] = useState(100);
@@ -36,14 +38,13 @@ export function Timeline() {
     // Let's calculate max end time of all clips.
     const totalDuration = useMemo(() => {
         let max = 10000; // Default min duration
-        project.timeline.tracks.forEach(t => {
-            t.clips.forEach(c => {
-                const end = userClipEnd(c);
-                if (end > max) max = end;
-            });
+        const t = timeline.mainTrack;
+        t.clips.forEach(c => {
+            const end = userClipEnd(c);
+            if (end > max) max = end;
         });
         return max;
-    }, [project]);
+    }, [timeline]);
 
     const totalWidth = (totalDuration / 1000) * pixelsPerSec;
 
@@ -106,8 +107,9 @@ export function Timeline() {
             const clip = initialClipState;
 
             // Find the track for this clip (expensive lookup but safe)
-            const track = project.timeline.tracks.find(t => t.clips.some(c => c.id === clip.id));
-            if (!track) return;
+            // const track = project.timeline.tracks.find(t => t.clips.some(c => c.id === clip.id));
+            const track = timeline.mainTrack;
+            if (!track.clips.some(c => c.id === clip.id)) return;
 
             let newClip = { ...clip };
 
@@ -172,7 +174,7 @@ export function Timeline() {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [draggingId, dragType, dragStartX, initialClipState, pixelsPerSec, project, updateClip]);
+    }, [draggingId, dragType, dragStartX, initialClipState, pixelsPerSec, timeline, updateClip]);
 
     const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right') => {
         e.preventDefault();
@@ -180,12 +182,10 @@ export function Timeline() {
 
         // Find the clip object
         let foundClip: Clip | null = null;
-        for (const t of project.timeline.tracks) {
-            const c = t.clips.find(c => c.id === id);
-            if (c) {
-                foundClip = c;
-                break;
-            }
+        const mainTrack = timeline.mainTrack;
+        const c = mainTrack.clips.find(c => c.id === id);
+        if (c) {
+            foundClip = c;
         }
 
         if (foundClip) {
@@ -205,9 +205,7 @@ export function Timeline() {
         return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}.${dec}`;
     };
 
-    // Find video tracks (assume all are video type for now or filter)
-    // We want to render them.
-    const videoTracks = project.timeline.tracks.filter(t => t.type === 'video');
+    // const videoTracks = project.timeline.tracks.filter(t => t.type === 'video'); // REMOVED
 
     return (
         <div className="flex flex-col h-full bg-[#1e1e1e] select-none text-white font-sans">
@@ -262,28 +260,32 @@ export function Timeline() {
                     {/* Tracks Container */}
                     <div className="py-2 flex flex-col gap-1">
 
-                        {videoTracks.map(track => (
-                            <div key={track.id} className="flex flex-col">
-                                <TimelineTrackVideo
-                                    clips={track.clips}
-                                    pixelsPerSec={pixelsPerSec}
-                                    trackHeight={TRACK_HEIGHT}
-                                    onDragStart={handleDragStart}
-                                />
-                                {track.cameraMotions && track.cameraMotions.length > 0 && (
-                                    <TimelineTrackCameraMotions
-                                        motions={track.cameraMotions}
+                        {/* Render Main Video Track */}
+                        {(() => {
+                            const track = timeline.mainTrack;
+                            return (
+                                <div key={track.id} className="flex flex-col">
+                                    <TimelineTrackVideo
+                                        clips={track.clips}
                                         pixelsPerSec={pixelsPerSec}
+                                        trackHeight={TRACK_HEIGHT}
+                                        onDragStart={handleDragStart}
                                     />
-                                )}
-                                {track.mouseEffects && track.mouseEffects.length > 0 && (
-                                    <TimelineTrackMouseEffects
-                                        effects={track.mouseEffects}
-                                        pixelsPerSec={pixelsPerSec}
-                                    />
-                                )}
-                            </div>
-                        ))}
+                                    {track.cameraMotions && track.cameraMotions.length > 0 && (
+                                        <TimelineTrackCameraMotions
+                                            motions={track.cameraMotions}
+                                            pixelsPerSec={pixelsPerSec}
+                                        />
+                                    )}
+                                    {track.mouseEffects && track.mouseEffects.length > 0 && (
+                                        <TimelineTrackMouseEffects
+                                            effects={track.mouseEffects}
+                                            pixelsPerSec={pixelsPerSec}
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Hover Line */}

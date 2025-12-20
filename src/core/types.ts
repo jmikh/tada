@@ -41,6 +41,9 @@ export interface Project {
     /** Global output settings for rendering */
     outputSettings: OutputSettings;
 
+    /** Global display settings (defaults) */
+    displaySettings: DisplaySettings;
+
     /**
      * Map of all Source assets used in the project.
      * Keyed by Source ID for O(1) lookup.
@@ -93,9 +96,9 @@ export interface Source {
  */
 export interface Timeline {
     id: ID;
-    /** List of tracks, ordered by vertical staking order (bottom to top usually) */
-    tracks: Track[];
-    /** Total duration of the timeline (max of all tracks) */
+    /** The main track containing clips */
+    mainTrack: Track;
+    /** Total duration of the timeline */
     durationMs: TimeMs;
 }
 
@@ -181,6 +184,7 @@ export interface Clip {
 
 export interface DisplaySettings {
     mode: 'fullscreen' | 'overlay';
+    maxZoom: number; // Max zoom intensity (e.g. 2.0)
     fullscreen: {
         backgroundColor: string;
         padding: number; // Proportional padding (0.0 to 1.0)

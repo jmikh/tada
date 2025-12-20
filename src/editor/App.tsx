@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { PlayerCanvas } from './player/PlayerCanvas';
-import { useEditorStore } from './store';
+// import { useEditorStore } from './store'; // REMOVED
+import { loadSessionData } from './session/sessionLoader';
+import { useProjectStore, useProjectData, useMaxZoom } from './stores/useProjectStore';
+import { usePlaybackStore } from './stores/usePlaybackStore';
 import { Timeline } from './timeline/Timeline';
 import { EventInspector } from './EventInspector';
 import { HoverInspector } from './HoverInspector';
-import { useProject } from '../hooks/useProject';
+// import { useProject } from '../hooks/useProject'; // REMOVED
 import { ProjectImpl } from '../core/project/project';
-import { TimelineImpl } from '../core/timeline/timeline';
+// import { TimelineImpl } from '../core/timeline/timeline'; // Unused
 import { TrackImpl } from '../core/timeline/track';
 import { ClipImpl } from '../core/timeline/clip';
 import type { Source } from '../core/types';
@@ -26,22 +29,48 @@ function Editor() {
     const [containerSize, setContainerSize] = useState({ width: 800, height: 450 });
     const [debugCameraMode, setDebugCameraMode] = useState<'active' | 'visualize'>('active');
 
-    const {
-        project,
-        loadProject,
-        currentTimeMs,
-        isPlaying: projectIsPlaying,
-        setCurrentTime: setProjectTime
-    } = useProject();
+    // -- Project State --
+    const project = useProjectData();
+    const loadProject = useProjectStore(s => s.loadProject);
+    const maxZoom = useMaxZoom(); // Selected from project
 
-    // Store State
-    const {
-        videoUrl,
-        metadata,
-        setVideoUrl,
-        setMetadata,
-        setRecordingStartTime,
-    } = useEditorStore();
+    // -- Playback State --
+    const isPlaying = usePlaybackStore(s => s.isPlaying);
+    const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
+    const setPlaybackTime = usePlaybackStore(s => s.setCurrentTime);
+
+    // Local Session State (loaded from storage)
+    const [videoUrl, setVideoUrl] = useState<string | null>(null);
+    const [metadata, setMetadata] = useState<UserEvent[]>([]);
+
+
+
+    // We need to store recordingStartTime to use it in onVideoLoaded
+    const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
+
+    // Update useEffect to set it
+    useEffect(() => {
+        loadSessionData().then(data => {
+            if (data.videoUrl) setVideoUrl(data.videoUrl);
+            if (data.metadata) setMetadata(data.metadata);
+            if (data.recordingStartTime) setRecordingStartTime(data.recordingStartTime);
+
+            if (data.videoUrl && data.recordingStartTime) {
+                const currentProject = useProjectStore.getState().project;
+                const sourceId = `source-${data.recordingStartTime}`;
+                if (!currentProject.sources[sourceId]) {
+                    // Force Reset Project so onVideoLoaded sees "empty" or "mismatch"
+                    // Actually, better to just load a fresh project here.
+                    loadProject(ProjectImpl.create('New Recording'));
+                }
+            }
+        });
+    }, []);
+
+    // ... 
+
+
+
 
     // Derived State from Project
     const outputVideoSize = project.outputSettings.size;
@@ -53,12 +82,18 @@ function Editor() {
         const video = e.currentTarget;
         const w = video.videoWidth;
         const h = video.videoHeight;
-        // setInputVideoSize({ width: w, height: h }); // REMOVED: Managed by Project Source now
 
-        // Initialize Project if empty
-        if (project.timeline.tracks.length === 0 && videoUrl) {
+        // Smart Init: Use recording timestamp to identify this unique recording session
+        const sourceId = `source-${recordingStartTime || 'main'}`;
+
+        // Initialize Project if this specific source is missing
+        if (!project.sources[sourceId] && videoUrl) {
+            console.log('Initializing Project for Source:', sourceId);
+
+            // Start with a clean slate to ensure we don't have leftover tracks from a previous project
+            let newProject = ProjectImpl.create('Recording ' + (new Date(recordingStartTime || Date.now()).toLocaleTimeString()));
+
             const durationMs = (video.duration && video.duration !== Infinity) ? video.duration * 1000 : 10000;
-            const sourceId = 'source-main';
 
             const source: Source = {
                 id: sourceId,
@@ -70,7 +105,7 @@ function Editor() {
                 events: metadata // Attach events to source
             };
 
-            let newProject = ProjectImpl.addSource(project, source);
+            newProject = ProjectImpl.addSource(newProject, source);
 
             // Create Track
             let track = TrackImpl.create('Main Video', 'video');
@@ -78,9 +113,8 @@ function Editor() {
             // Generate Camera Motions if metadata exists
             if (metadata && metadata.length > 0) {
                 // 1. Configs
-                // Use Output Size from Project (default 4K or 1080p)
                 const zoomConfig: ZoomConfig = {
-                    zoomIntensity: 2.0, // Default zoom
+                    zoomIntensity: maxZoom,
                     zoomDuration: 2000,
                     zoomOffset: -500
                 };
@@ -88,15 +122,11 @@ function Editor() {
                 const videoMappingConfig = new ViewTransform(
                     { width: w, height: h }, // Input
                     outputVideoSize,         // Output (Project Settings)
-                    0                        // padding (default 0 for mapping logic inside motions?) 
-                    // Actually padding is handled by where we place the video? 
-                    // For now assume 0 padding for motion generation context.
+                    0
                 );
 
                 // 2. Generate
                 const motions = calculateZoomSchedule(zoomConfig, videoMappingConfig, metadata);
-                console.log("Generated Motions:", motions.length);
-
                 track.cameraMotions = motions;
 
                 // 3. Generate Mouse Effects
@@ -110,7 +140,7 @@ function Editor() {
             track = TrackImpl.addClip(track, clip);
 
             // Add Track to Timeline
-            const newTimeline = TimelineImpl.addTrack(newProject.timeline, track);
+            const newTimeline = { ...newProject.timeline, mainTrack: track };
 
             newProject = { ...newProject, timeline: newTimeline };
 
@@ -120,34 +150,8 @@ function Editor() {
     };
 
     // Data Loading
-    useEffect(() => {
-        chrome.storage.local.get(['recordingMetadata'], (result) => {
-            if (result.recordingMetadata) {
-                setMetadata(result.recordingMetadata as UserEvent[]);
-            }
-        });
+    // Data Loading moved to top-level effect
 
-        const request = indexedDB.open('RecordoDB', 1);
-        request.onsuccess = (event: any) => {
-            const db = event.target.result;
-            const transaction = db.transaction(['recordings'], 'readonly');
-            const store = transaction.objectStore('recordings');
-            const getRequest = store.get('latest');
-            getRequest.onsuccess = () => {
-                const result = getRequest.result;
-                if (result) {
-                    const blob = result.blob;
-                    setVideoUrl(URL.createObjectURL(blob));
-                    if (result.startTime) setRecordingStartTime(result.startTime);
-                    else if (result.timestamp) setRecordingStartTime(result.timestamp);
-
-                    if (result.width && result.height) {
-                        // setInputVideoSize({ width: result.width, height: result.height }); // Removed: Managed by Project Source now
-                    }
-                }
-            };
-        };
-    }, []);
 
     // Playback Loop & Video Sync
     useEffect(() => {
@@ -162,9 +166,9 @@ function Editor() {
             const delta = now - lastTime;
             lastTime = now;
 
-            if (projectIsPlaying) {
+            if (isPlaying) {
                 const newTime = currentTimeMs + delta;
-                setProjectTime(newTime);
+                setPlaybackTime(newTime);
 
                 // Sync Video Element
                 const renderState = ProjectImpl.getRenderState(project, newTime);
@@ -203,13 +207,13 @@ function Editor() {
             rAFId = requestAnimationFrame(loop);
         };
 
-        if (projectIsPlaying) {
+        if (isPlaying) {
             lastTime = performance.now();
         }
 
         rAFId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(rAFId);
-    }, [projectIsPlaying, project, currentTimeMs]); // Dependency on currentTimeMs might cause 60fps re-bind?
+    }, [isPlaying, project, currentTimeMs]); // Dependency on currentTimeMs might cause 60fps re-bind?
 
     // Optimization: Don't depend on currentTimeMs in effect dependency if possible.
     // But we need the initial value. 

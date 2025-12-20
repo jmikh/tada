@@ -39,6 +39,20 @@ export class ProjectImpl {
             outputSettings: {
                 size: { width: 3840, height: 2160 },
                 frameRate: 30
+            },
+            displaySettings: {
+                mode: 'fullscreen',
+                maxZoom: 2.0,
+                fullscreen: {
+                    backgroundColor: '#000000',
+                    padding: 0.1
+                },
+                overlay: {
+                    shape: 'circle',
+                    borderRadius: 20,
+                    borderThickness: 4,
+                    borderColor: '#ffffff'
+                }
             }
         };
     }
@@ -70,9 +84,9 @@ export class ProjectImpl {
             tracks: []
         };
 
-        for (const track of project.timeline.tracks) {
-            if (track.muted || !track.visible) continue;
+        const track = project.timeline.mainTrack; // Single track
 
+        if (!track.muted && track.visible) {
             // Find clip at time
             const clip = TrackImpl.findClipAtTime(track, timeMs);
 
@@ -80,7 +94,6 @@ export class ProjectImpl {
                 const source = project.sources[clip.sourceId];
                 if (source) {
                     // Calculate Source Time
-                    // sourceTime = sourceIn + (timelineTime - timelineIn) * speed
                     const offset = (timeMs - clip.timelineInMs) * clip.speed;
                     const sourceTimeMs = clip.sourceInMs + offset;
 
