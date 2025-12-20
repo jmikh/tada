@@ -43,16 +43,8 @@ export class ProjectImpl {
             displaySettings: {
                 mode: 'fullscreen',
                 maxZoom: 2.0,
-                fullscreen: {
-                    backgroundColor: '#000000',
-                    padding: 0.1
-                },
-                overlay: {
-                    shape: 'circle',
-                    borderRadius: 20,
-                    borderThickness: 4,
-                    borderColor: '#ffffff'
-                }
+                backgroundColor: '#000000',
+                padding: 0.1
             }
         };
     }
@@ -66,6 +58,25 @@ export class ProjectImpl {
             sources: {
                 ...project.sources,
                 [source.id]: source
+            }
+        };
+    }
+
+    /**
+     * Updates an existing media source with partial data (e.g. adding duration after load).
+     */
+    static updateSource(project: Project, sourceId: ID, updates: Partial<Source>): Project {
+        const existing = project.sources[sourceId];
+        if (!existing) return project;
+
+        return {
+            ...project,
+            sources: {
+                ...project.sources,
+                [sourceId]: {
+                    ...existing,
+                    ...updates
+                }
             }
         };
     }

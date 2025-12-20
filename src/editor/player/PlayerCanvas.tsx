@@ -1,4 +1,4 @@
-import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { useRef, useEffect, useImperativeHandle } from 'react';
 // import { useEditorStore } from '../store'; // Unused now
 import { ViewTransform } from '../../core/effects/viewTransform';
 import { getCameraStateAtTime } from '../../core/effects/cameraMotion';
@@ -7,326 +7,267 @@ import { useProjectStore, useProjectData } from '../stores/useProjectStore';
 import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { ProjectImpl } from '../../core/project/project';
 
-interface PlayerCanvasProps {
-    src: string;
-    onLoadedMetadata?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
-    className?: string;
+
+
+export const PlayerCanvas = ({
+    className,
+    muted = true,
+    debugCameraMode = 'active',
+    ref
+}: {
+    className?: string; // Standardize 
     muted?: boolean;
     debugCameraMode?: 'active' | 'visualize';
-}
-
-export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
-    src,
-    onLoadedMetadata,
-    muted = true,
-    debugCameraMode = 'active'
-}, ref) => {
-    // We need some store values for sizing, but schedule comes from hook
-    // const { paddingPercentage } = useEditorStore(); // REMOVED
+    ref?: React.Ref<HTMLVideoElement>;
+    // Legacy props (ignoring them now, but keeping in interface if needed to avoid TS errors in App.tsx before refactor)
+    src?: string;
+    onLoadedMetadata?: (e: any) => void;
+}) => {
     const project = useProjectData();
-    const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
-    const paddingPercentage = project?.timeline?.mainTrack?.displaySettings?.fullscreen?.padding || 0;
+    const updateSource = useProjectStore(s => s.updateSource);
 
-    // Derived State from Project (for React Render Cycle)
+    // Playback State (Observed directly in loop)
+    // const { isPlaying } = usePlaybackStore();
+
+    // Derived State
     const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
-    const inputVideoSize = (() => {
-        // TODO: Do not rely on source[0], find the correct active source or main source.
-        const sources = project?.sources || {};
-        const source = Object.values(sources)[0];
-        if (!source?.size) {
-            // Only warn if we actually have sources but no size (unexpected)
-            if (Object.keys(sources).length > 0) {
-                console.error('[PlayerCanvas] project.sources[0].size is missing!', source);
-            }
-            return { width: 1920, height: 1080 };
-        }
-        return source.size;
-    })();
+    const sources = project?.sources || {};
 
-    // Resolve what to show
-    let renderState;
-    try {
-        renderState = ProjectImpl.getRenderState(project, currentTimeMs);
-    } catch (e) {
-        console.error('[PlayerCanvas] Error getting render state:', e);
-        // Fallback to empty state
-        renderState = { timeMs: currentTimeMs, tracks: [] };
-    }
-
-    // For now, let's assume Track 1 is the "Video" track we want to show.
-    // In reality, we might mix multiple tracks.
-    // Let's find the first track with a valid clip.
-    const activeTrackItem = renderState.tracks.find(t => t.clip);
-    const activeClip = activeTrackItem?.clip;
-
-    // DEBUG LOGS (State updates)
-    useEffect(() => {
-        if (!activeClip && project.sources && Object.keys(project.sources).length > 0) {
-            // Warn if no active clip but we have sources (potential issue)
-            // console.warn('[PlayerCanvas] No active clip at time:', currentTimeMs);
-        }
-    }, [currentTimeMs, activeClip, project.sources]);
-
-    const internalVideoRef = useRef<HTMLVideoElement>(null);
+    const internalVideoRefs = useRef<{ [sourceId: string]: HTMLVideoElement }>({});
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number>(0);
+    const lastTimeRef = useRef<number>(0);
 
-    // Expose the internal video element to the parent
-    useImperativeHandle(ref, () => internalVideoRef.current as HTMLVideoElement);
+    // Expose the "Main" video element to the parent if needed (Legacy support)
+    // We'll expose the video of the first active track if possible, or undefined.
+    useImperativeHandle(ref, () => {
+        const firstSourceId = Object.keys(sources)[0];
+        return internalVideoRefs.current[firstSourceId];
+    });
 
+    // ------------------------------------------------------------------------
+    // RENDER LOOP
+    // ------------------------------------------------------------------------
+
+    // ------------------------------------------------------------------------
+    // RENDER LOOP
+    // ------------------------------------------------------------------------
+
+    // Single Effect to manage the Loop for the lifetime of the component
     useEffect(() => {
-        console.log('[PlayerCanvas] Mounted. Src:', src);
-    }, [src]);
+        const tick = (time: number) => {
+            const pbState = usePlaybackStore.getState();
 
-    // Metadata handler wrapper
-    const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-        if (onLoadedMetadata) {
-            onLoadedMetadata(e);
+            if (pbState.isPlaying) {
+                if (lastTimeRef.current === 0) lastTimeRef.current = time;
+                const delta = time - lastTimeRef.current;
+
+                // Cap delta to prevent huge jumps (e.g. 100ms)
+                const safeDelta = Math.min(delta, 100);
+
+                if (safeDelta > 0) {
+                    const newTime = pbState.currentTimeMs + safeDelta;
+                    pbState.setCurrentTime(newTime);
+                }
+                lastTimeRef.current = time;
+            } else {
+                lastTimeRef.current = 0;
+            }
+
+            // Always render pipeline to ensure UI reflects state (scrubbing, seeking, resizing)
+            // Even if paused, we might need to redraw if something changed elsewhere.
+            // Optimization: Could check if state changed, but for now 60fps draw is fine for an editor.
+            renderPipeline();
+
+            animationFrameRef.current = requestAnimationFrame(tick);
+        };
+
+        animationFrameRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(animationFrameRef.current);
+    }, []);
+
+    // Render Pipeline (Ref-stable or accessed via loose closure - 'renderPipeline' uses getState inside)
+    const renderPipeline = () => {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (!canvas || !ctx) return;
+
+        const state = useProjectStore.getState();
+        const playback = usePlaybackStore.getState();
+
+        const project = state.project;
+        const currentTimeMs = playback.currentTimeMs;
+        const paddingPercentage = project.timeline.mainTrack?.displaySettings?.padding || 0;
+        const outputSize = project.outputSettings.size;
+
+        // Clear
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Resolve Render State
+        let renderState;
+        try {
+            renderState = ProjectImpl.getRenderState(project, currentTimeMs);
+        } catch { return; }
+
+        // Find active clip(s)
+        const trackItem = renderState.tracks.find(t => t.clip);
+        if (!trackItem || !trackItem.clip) return;
+
+        const clip = trackItem.clip;
+        const sourceId = clip.source.id;
+        const video = internalVideoRefs.current[sourceId];
+
+        if (video) {
+            // A. Sync Video Time
+            const desiredTimeS = clip.sourceTimeMs / 1000;
+
+            // Only sync if significant drift or separate state
+            if (Math.abs(video.currentTime - desiredTimeS) > 0.1) {
+                video.currentTime = desiredTimeS;
+            }
+
+            // B. Draw
+            const inputSize = video.videoWidth && video.videoHeight
+                ? { width: video.videoWidth, height: video.videoHeight }
+                : clip.source.size;
+
+            if (!inputSize) return;
+
+            const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
+
+            // Camera Internal
+            const track = project.timeline.mainTrack; // Legacy assumption
+            const cameraMotions = track?.cameraMotions || [];
+
+            const cameraWindow = getCameraStateAtTime(cameraMotions, currentTimeMs, outputSize);
+
+            // Debug vs Active
+            const effectiveCamera = (debugCameraMode === 'visualize')
+                ? { x: 0, y: 0, width: outputSize.width, height: outputSize.height }
+                : cameraWindow;
+
+            const renderRects = config.resolveRenderRects(effectiveCamera);
+
+            if (renderRects) {
+                ctx.drawImage(
+                    video,
+                    renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
+                    renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
+                );
+            }
+
+            // Visual Debug Overlays
+            if (debugCameraMode === 'visualize') {
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(cameraWindow.x, cameraWindow.y, cameraWindow.width, cameraWindow.height);
+            }
+
+            // Mouse Effects
+            if (track.mouseEffects) {
+                drawMouseEffects(ctx, track.mouseEffects, currentTimeMs, effectiveCamera, config);
+            }
         }
-        // Initialize canvas size once metadata is loaded
+    };
+    // Wait, 'loop' function is redefined on every render.
+    // We need a ref to the loop function or a stable architecture.
+    // Better: Moving user logic outside or using `useCallback`.
+    // Actually, `loop` reads `usePlaybackStore.getState()` so it doesn't need closure scope for data.
+    // It DOES need `gameLoopActive`.
+
+    // Refactored Loop for Stability:
+    useEffect(() => {
+        const tick = (time: number) => {
+            // 1. Logic
+            const pbState = usePlaybackStore.getState();
+            if (pbState.isPlaying) {
+                // Delta Time Calculation
+                // We need a ref for 'lastTime' that persists across re-renders
+                // Managed in component scope `lastTimeRef`.
+                if (lastTimeRef.current === 0) lastTimeRef.current = time;
+                const delta = time - lastTimeRef.current;
+
+                // Cap delta to prevent huge jumps if tab was backgrounded
+                const safeDelta = Math.min(delta, 100);
+
+                usePlaybackStore.getState().setCurrentTime(pbState.currentTimeMs + safeDelta);
+                lastTimeRef.current = time;
+            } else {
+                lastTimeRef.current = 0;
+            }
+
+            // 2. Render
+            renderPipeline();
+
+            // 3. Next
+            animationFrameRef.current = requestAnimationFrame(tick);
+        };
+
+        animationFrameRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(animationFrameRef.current);
+    }, []); // Run once!
+
+
+    // Canvas Sizing
+    useEffect(() => {
         if (canvasRef.current && outputVideoSize) {
             canvasRef.current.width = outputVideoSize.width;
             canvasRef.current.height = outputVideoSize.height;
-
-            // Force draw initial frame
-            const video = e.currentTarget;
-            drawVideo(video, canvasRef.current);
+            renderPipeline(); // Force draw on resize
         }
-        startRenderLoop();
+    }, [outputVideoSize.width, outputVideoSize.height]);
+
+
+    // Handle Metadata Load
+    const handleMetadata = (sourceId: string, e: React.SyntheticEvent<HTMLVideoElement>) => {
+        const video = e.currentTarget;
+        console.log(`[PlayerCanvas] Source Loaded: ${sourceId} (${video.videoWidth}x${video.videoHeight})`);
+
+        // Update Project Store with real dimensions/duration
+        updateSource(sourceId, {
+            size: { width: video.videoWidth, height: video.videoHeight },
+            durationMs: video.duration * 1000,
+        });
+
+        // Force re-render pipeline
+        renderPipeline();
     };
-
-    // ------------------------------------------------------------------------
-    // RENDER LOOP ARCHITECTURE
-    // ------------------------------------------------------------------------
-    // To ensure 60fps performance and avoid React render-cycle lag, we use
-    // an imperative render loop via requestAnimationFrame.
-    //
-    // CRITICAL: We fetch the latest state directly from the zustand stores
-    // (useProject.getState()) inside the loop. This avoids "stale closure"
-    // issues where the loop would otherwise be stuck using the state
-    // captured at component mount.
-    // ------------------------------------------------------------------------
-
-    const drawVideo = (video: HTMLVideoElement, canvas: HTMLCanvasElement) => {
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        // 1. Fetch Fresh State (Bypass React Closures)
-        const project = useProjectStore.getState().project;
-        const currentTimeMs = usePlaybackStore.getState().currentTimeMs;
-        const paddingPercentage = project.timeline.mainTrack.displaySettings.fullscreen.padding;
-
-        // Derive needed sizes from fresh project state
-        const freshOutputSize = project.outputSettings.size;
-        // TODO: Do not rely on source[0], find the correct active source or main source.
-        const freshSource = Object.values(project.sources || {})[0];
-        const freshInputSize = freshSource?.size;
-
-        if (!freshInputSize) return;
-
-        // 2. Resolve Active Clip & Track & Mouse Effects
-        let activeClip = null;
-        let activeTrackMotions = null;
-        let activeTrackMouseEffects = null;
-        try {
-            const renderState = ProjectImpl.getRenderState(project, currentTimeMs);
-            const activeTrackItem = renderState.tracks.find(t => t.clip);
-            activeClip = activeTrackItem?.clip;
-
-            // Find the original track to access motions (assuming renderState might not have them, or just to be safe)
-            if (activeTrackItem) {
-                const fullTrack = project.timeline.mainTrack;
-                activeTrackMotions = fullTrack?.cameraMotions;
-                activeTrackMouseEffects = fullTrack?.mouseEffects;
-            }
-        } catch { /* ignore render errors to prevent crash loop */ }
-
-        // 3. Clear Screen if No Active Clip (or always clear first)
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (!activeClip) {
-            return;
-        }
-
-        // 4. Sync Video Element to Virtual Timeline
-        const desiredTime = activeClip.sourceTimeMs / 1000;
-        if (Math.abs(video.currentTime - desiredTime) > 0.1) {
-            video.currentTime = desiredTime;
-        }
-
-        // 5. Calculate Draw Dimensions
-        const config = new ViewTransform(
-            freshInputSize,
-            freshOutputSize,
-            paddingPercentage
-        );
-
-        // 6. Calculate Camera State (Output Space Window)
-        const cameraWindow = getCameraStateAtTime(
-            activeTrackMotions || [],
-            currentTimeMs,
-            freshOutputSize // Use Output Size for "Full View" reference
-        );
-
-        // 7. Draw the Frame
-
-        if (debugCameraMode === 'visualize') {
-            // A. Visualize Mode:
-            // 1. Draw Full Content (Zoom 1x view)
-            // Camera = Full Output
-            const fullView = { x: 0, y: 0, width: freshOutputSize.width, height: freshOutputSize.height };
-            const renderRects = config.resolveRenderRects(fullView);
-
-            if (renderRects) {
-                ctx.drawImage(
-                    video,
-                    renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
-                    renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
-                );
-            }
-
-            // 2. Draw Camera Window (Green Box)
-            // cameraWindow is already in Output/Canvas Space.
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(cameraWindow.x, cameraWindow.y, cameraWindow.width, cameraWindow.height);
-
-            // 3. Draw Content Rect (Blue Box) - Optional, helpful for debugging constraints
-            ctx.strokeStyle = 'rgba(0, 100, 255, 0.5)';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(config.contentRect.x, config.contentRect.y, config.contentRect.width, config.contentRect.height);
-
-        } else {
-            // B. Active Mode: Actual Camera View
-            const renderRects = config.resolveRenderRects(cameraWindow);
-
-            if (renderRects) {
-                ctx.drawImage(
-                    video,
-                    renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
-                    renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
-                );
-            } else {
-                // If null, it means we are looking at purely padding.
-                // Draw nothing (already cleared) or draw background color?
-            }
-        }
-
-        // 8. Draw Mouse Effects (Overlay)
-        if (activeTrackMouseEffects && activeTrackMouseEffects.length > 0) {
-            // Determine the "Camera" we are drawing into.
-            // In 'visualize' mode, we are drawing into the "Full View" camera.
-            // In 'active' mode, we are drawing into the actual `cameraWindow`.
-
-            const effectiveCamera = (debugCameraMode === 'visualize')
-                ? { x: 0, y: 0, width: freshOutputSize.width, height: freshOutputSize.height }
-                : cameraWindow;
-
-            drawMouseEffects(
-                ctx,
-                activeTrackMouseEffects,
-                currentTimeMs,
-                effectiveCamera,
-                config
-            );
-        }
-    };
-
-    const startRenderLoop = () => {
-        const render = () => {
-            if (internalVideoRef.current && canvasRef.current) {
-                const video = internalVideoRef.current;
-                if (!video.paused && !video.ended) {
-                    drawVideo(video, canvasRef.current);
-
-                    // Update UI time (throttle this if performance issues arise)
-                    usePlaybackStore.getState().setCurrentTime(video.currentTime * 1000);
-                }
-            }
-            animationFrameRef.current = requestAnimationFrame(render);
-        };
-        render(); // Start loop
-    };
-
-    useEffect(() => {
-        return () => {
-            if (animationFrameRef.current) {
-                cancelAnimationFrame(animationFrameRef.current);
-            }
-        };
-    }, []);
-
-    // Effect to update canvas size if outputVideoSize changes
-    useEffect(() => {
-        if (canvasRef.current) {
-            canvasRef.current.width = outputVideoSize.width;
-            canvasRef.current.height = outputVideoSize.height;
-            // Trigger a redraw if we have a frame
-            const video = internalVideoRef.current;
-            if (video && !video.paused && !video.ended) {
-                drawVideo(video, canvasRef.current);
-            }
-        }
-    }, [outputVideoSize, inputVideoSize, paddingPercentage]);
-
-    // Effect to handle seeking/updates when paused (to update canvas)
-    useEffect(() => {
-        const video = internalVideoRef.current;
-        if (!video) return;
-
-        const handleSeeked = () => {
-            if (canvasRef.current) {
-                drawVideo(video, canvasRef.current);
-            }
-        };
-
-        video.addEventListener('seeked', handleSeeked);
-        // Also update on timeupdate just in case
-        video.addEventListener('timeupdate', handleSeeked);
-
-        return () => {
-            video.removeEventListener('seeked', handleSeeked);
-            video.removeEventListener('timeupdate', handleSeeked);
-        };
-    }, []);
-
-
-    // Polling draw to ensure we catch frame updates when paused (e.g. after seek)
-    // This is a safety net for when 'seeked' events might be missed or debounced.
-    useEffect(() => {
-        const interval = setInterval(() => {
-            const video = internalVideoRef.current;
-            if (video && video.paused && canvasRef.current) {
-                drawVideo(video, canvasRef.current);
-            }
-        }, 200); // Reduced frequency
-        return () => clearInterval(interval);
-    }, []);
 
     return (
         <>
-            {/* Hidden Video Source */}
-            <video
-                ref={internalVideoRef}
-                src={src}
-                onLoadedMetadata={handleLoadedMetadata}
-                style={{ display: 'none' }}
-                muted={muted}
-                playsInline
-            />
+            {/* Hidden Source Container */}
+            <div style={{ display: 'none' }}>
+                {Object.values(sources).map((source) => (
+                    source.url ? (
+                        <video
+                            key={source.id}
+                            ref={el => {
+                                if (el) internalVideoRefs.current[source.id] = el;
+                                else delete internalVideoRefs.current[source.id];
+                            }}
+                            src={source.url}
+                            onLoadedMetadata={(e) => handleMetadata(source.id, e)}
+                            muted={muted}
+                            playsInline
+                            crossOrigin="anonymous"
+                        />
+                    ) : null
+                ))}
+            </div>
 
             {/* Render Target */}
             <canvas
                 ref={canvasRef}
+                className={className}
                 style={{
-                    backgroundColor: '#000', // Standard Black Background
-                    aspectRatio: `${outputVideoSize.width} / ${outputVideoSize.height}`,
+                    backgroundColor: '#000',
                     width: '100%',
                     height: '100%',
+                    objectFit: 'contain' // CSS scaling handled by parent
                 }}
             />
         </>
     );
-});
+};
 
 PlayerCanvas.displayName = 'PlayerCanvas';

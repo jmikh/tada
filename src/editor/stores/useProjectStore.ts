@@ -15,6 +15,7 @@ interface ProjectState {
     // Timeline Actions
     splitAt: (timeMs: number) => void;
     updateClip: (trackId: ID, clip: import('../../core/types').Clip) => void;
+    updateSource: (sourceId: ID, updates: Partial<import('../../core/types').Source>) => void;
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -62,6 +63,10 @@ export const useProjectStore = create<ProjectState>()(
                     return state;
                 }
             }),
+
+            updateSource: (sourceId, updates) => set((state) => ({
+                project: ProjectImpl.updateSource(state.project, sourceId, updates)
+            })),
         }),
         {
             name: 'recordo-project-storage', // name of the item in the storage (must be unique)

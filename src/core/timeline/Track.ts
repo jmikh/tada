@@ -22,16 +22,8 @@ export class TrackImpl {
             displaySettings: {
                 mode: 'fullscreen',
                 maxZoom: 1.0,
-                fullscreen: {
-                    backgroundColor: '#000000',
-                    padding: 0
-                },
-                overlay: {
-                    shape: 'rectangle',
-                    borderRadius: 0,
-                    borderThickness: 0,
-                    borderColor: '#ffffff'
-                }
+                backgroundColor: '#000000',
+                padding: 0
             }
         };
     }

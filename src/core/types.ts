@@ -185,16 +185,8 @@ export interface Clip {
 export interface DisplaySettings {
     mode: 'fullscreen' | 'overlay';
     maxZoom: number; // Max zoom intensity (e.g. 2.0)
-    fullscreen: {
-        backgroundColor: string;
-        padding: number; // Proportional padding (0.0 to 1.0)
-    };
-    overlay: {
-        shape: 'circle' | 'square' | 'rectangle';
-        borderRadius: number;
-        borderThickness: number;
-        borderColor: string;
-    };
+    backgroundColor: string;
+    padding: number; // Proportional padding (0.0 to 1.0)
 }
 
 // ==========================================

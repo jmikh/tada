@@ -3,7 +3,7 @@ import { PlayerCanvas } from './player/PlayerCanvas';
 // import { useEditorStore } from './store'; // REMOVED
 import { loadSessionData } from './session/sessionLoader';
 import { useProjectStore, useProjectData, useMaxZoom } from './stores/useProjectStore';
-import { usePlaybackStore } from './stores/usePlaybackStore';
+// import { usePlaybackStore } from './stores/usePlaybackStore';
 import { Timeline } from './timeline/Timeline';
 import { EventInspector } from './EventInspector';
 import { HoverInspector } from './HoverInspector';
@@ -13,7 +13,7 @@ import { ProjectImpl } from '../core/project/project';
 import { TrackImpl } from '../core/timeline/track';
 import { ClipImpl } from '../core/timeline/clip';
 import type { Source } from '../core/types';
-import type { UserEvent } from '../core/types';
+// import type { UserEvent } from '../core/types';
 import { ViewTransform } from '../core/effects/viewTransform';
 import { calculateZoomSchedule } from '../core/effects/cameraMotion';
 import { generateMouseEffects } from '../core/effects/mouseEffects';
@@ -23,7 +23,6 @@ import { type ZoomConfig } from '../core/types';
 
 
 function Editor() {
-    const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const [containerSize, setContainerSize] = useState({ width: 800, height: 450 });
@@ -34,186 +33,102 @@ function Editor() {
     const loadProject = useProjectStore(s => s.loadProject);
     const maxZoom = useMaxZoom(); // Selected from project
 
-    // -- Playback State --
-    const isPlaying = usePlaybackStore(s => s.isPlaying);
-    const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
-    const setPlaybackTime = usePlaybackStore(s => s.setCurrentTime);
-
-    // Local Session State (loaded from storage)
-    const [videoUrl, setVideoUrl] = useState<string | null>(null);
-    const [metadata, setMetadata] = useState<UserEvent[]>([]);
-
-
-
-    // We need to store recordingStartTime to use it in onVideoLoaded
-    const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
-
-    // Update useEffect to set it
+    // Load Session & Initialize Project
     useEffect(() => {
         loadSessionData().then(data => {
-            if (data.videoUrl) setVideoUrl(data.videoUrl);
-            if (data.metadata) setMetadata(data.metadata);
-            if (data.recordingStartTime) setRecordingStartTime(data.recordingStartTime);
-
             if (data.videoUrl && data.recordingStartTime) {
-                const currentProject = useProjectStore.getState().project;
+                // Initialize Project if needed
+                // For now, we just ensure a backing store source exists.
+                // In a robust app, we'd check if specific ID exists.
+
                 const sourceId = `source-${data.recordingStartTime}`;
+                const currentProject = useProjectStore.getState().project;
+
                 if (!currentProject.sources[sourceId]) {
-                    // Force Reset Project so onVideoLoaded sees "empty" or "mismatch"
-                    // Actually, better to just load a fresh project here.
-                    loadProject(ProjectImpl.create('New Recording'));
+                    console.log('Initializing Project for Source:', sourceId);
+
+                    let newProject = ProjectImpl.create('Recording ' + (new Date(data.recordingStartTime).toLocaleTimeString()));
+
+                    // We don't know duration/size yet, PlayerCanvas will update it later.
+                    // We create a "Skeleton" source.
+                    const source: Source = {
+                        id: sourceId,
+                        type: 'video',
+                        url: data.videoUrl,
+                        durationMs: 0, // Unknown
+                        size: { width: 0, height: 0 }, // Unknown
+                        hasAudio: true,
+                        events: data.metadata || []
+                    };
+
+                    newProject = ProjectImpl.addSource(newProject, source);
+                    loadProject(newProject);
                 }
             }
         });
     }, []);
 
-    // ... 
-
-
-
-
-    // Derived State from Project
-    const outputVideoSize = project.outputSettings.size;
-    // TODO: Do not rely on source[0], find the correct active source or main source.
-    const inputVideoSize = Object.values(project.sources)[0]?.size || null;
-
-    const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-        console.log('Video loaded');
-        const video = e.currentTarget;
-        const w = video.videoWidth;
-        const h = video.videoHeight;
-
-        // Smart Init: Use recording timestamp to identify this unique recording session
-        const sourceId = `source-${recordingStartTime || 'main'}`;
-
-        // Initialize Project if this specific source is missing
-        if (!project.sources[sourceId] && videoUrl) {
-            console.log('Initializing Project for Source:', sourceId);
-
-            // Start with a clean slate to ensure we don't have leftover tracks from a previous project
-            let newProject = ProjectImpl.create('Recording ' + (new Date(recordingStartTime || Date.now()).toLocaleTimeString()));
-
-            const durationMs = (video.duration && video.duration !== Infinity) ? video.duration * 1000 : 10000;
-
-            const source: Source = {
-                id: sourceId,
-                type: 'video',
-                url: videoUrl,
-                durationMs: durationMs,
-                size: { width: w, height: h },
-                hasAudio: true,
-                events: metadata // Attach events to source
-            };
-
-            newProject = ProjectImpl.addSource(newProject, source);
-
-            // Create Track
-            let track = TrackImpl.create('Main Video', 'video');
-
-            // Generate Camera Motions if metadata exists
-            if (metadata && metadata.length > 0) {
-                // 1. Configs
-                const zoomConfig: ZoomConfig = {
-                    zoomIntensity: maxZoom,
-                    zoomDuration: 2000,
-                    zoomOffset: -500
-                };
-
-                const videoMappingConfig = new ViewTransform(
-                    { width: w, height: h }, // Input
-                    outputVideoSize,         // Output (Project Settings)
-                    0
-                );
-
-                // 2. Generate
-                const motions = calculateZoomSchedule(zoomConfig, videoMappingConfig, metadata);
-                track.cameraMotions = motions;
-
-                // 3. Generate Mouse Effects
-                const mouseEffects = generateMouseEffects(metadata, durationMs);
-                track.mouseEffects = mouseEffects;
-            }
-
-            // Create Clip covering entire duration
-            const clip = ClipImpl.create(sourceId, 0, durationMs, 0);
-
-            track = TrackImpl.addClip(track, clip);
-
-            // Add Track to Timeline
-            const newTimeline = { ...newProject.timeline, mainTrack: track };
-
-            newProject = { ...newProject, timeline: newTimeline };
-
-            loadProject(newProject);
-            console.log('Project Initialized with Video Source', newProject);
-        }
-    };
-
-    // Data Loading
-    // Data Loading moved to top-level effect
-
-
-    // Playback Loop & Video Sync
+    // Reactive Project Initialization: Create Tracks once Source is ready
+    // We watch for a source that has valid dimensions but is not yet in a track.
     useEffect(() => {
-        const video = videoRef.current;
-        if (!video) return;
+        const proj = useProjectStore.getState().project;
+        const mainTrack = proj.timeline.mainTrack;
 
-        let rAFId: number;
-        let lastTime = performance.now();
+        // If we have no clips but we do have a valid source...
+        // (Simplified logic: assumes 1 source = 1 track project for now)
+        if (mainTrack.clips.length === 0) {
+            const sourceIds = Object.keys(proj.sources);
+            if (sourceIds.length > 0) {
+                const source = proj.sources[sourceIds[0]];
+                // Wait for metadata load (size > 0)
+                if (source.size.width > 0 && source.durationMs > 0) {
+                    console.log('Source Ready, Creating Default Track/Clip', source.id);
 
-        const loop = () => {
-            const now = performance.now();
-            const delta = now - lastTime;
-            lastTime = now;
+                    // Create defaults
+                    let track = TrackImpl.create('Main Video', 'video');
 
-            if (isPlaying) {
-                const newTime = currentTimeMs + delta;
-                setPlaybackTime(newTime);
-
-                // Sync Video Element
-                const renderState = ProjectImpl.getRenderState(project, newTime);
-
-                // Assume first track is main video for now
-                // Find visible clip in render tracks
-                const trackState = renderState.tracks.find(t => t.clip);
-
-                if (trackState && trackState.clip) {
-                    const targetSourceTime = trackState.clip.sourceTimeMs / 1000;
-
-                    if (Math.abs(video.currentTime - targetSourceTime) > 0.1) {
-                        video.currentTime = targetSourceTime;
+                    // 1. Generate Camera Motions from Metadata
+                    if (source.events && source.events.length > 0) {
+                        const zoomConfig: ZoomConfig = {
+                            zoomIntensity: maxZoom,
+                            zoomDuration: 2000,
+                            zoomOffset: -500
+                        };
+                        const videoMappingConfig = new ViewTransform(
+                            source.size,
+                            proj.outputSettings.size,
+                            0
+                        );
+                        track.cameraMotions = calculateZoomSchedule(zoomConfig, videoMappingConfig, source.events);
+                        track.mouseEffects = generateMouseEffects(source.events, source.durationMs);
                     }
-                    if (video.paused) {
-                        video.play().catch(console.error);
-                    }
-                } else {
-                    // Gap
-                    if (!video.paused) video.pause();
+
+                    const clip = ClipImpl.create(source.id, 0, source.durationMs, 0);
+                    track = TrackImpl.addClip(track, clip);
+
+                    // Update Project
+                    const newTimeline = { ...proj.timeline, mainTrack: track };
+                    loadProject({ ...proj, timeline: newTimeline });
                 }
-            } else {
-                // Paused state: Sync playhead to video if scrubbing happened externally?
-                // Or ensure video frame matches playhead?
-                const renderState = ProjectImpl.getRenderState(project, currentTimeMs);
-                const trackState = renderState.tracks.find(t => t.clip);
-                if (trackState && trackState.clip) {
-                    const targetSourceTime = trackState.clip.sourceTimeMs / 1000;
-                    if (Math.abs(video.currentTime - targetSourceTime) > 0.1) {
-                        video.currentTime = targetSourceTime;
-                    }
-                }
-                if (!video.paused) video.pause();
             }
-
-            rAFId = requestAnimationFrame(loop);
-        };
-
-        if (isPlaying) {
-            lastTime = performance.now();
         }
+    }, [project.sources, project.outputSettings]); // React to source updates
 
-        rAFId = requestAnimationFrame(loop);
-        return () => cancelAnimationFrame(rAFId);
-    }, [isPlaying, project, currentTimeMs]); // Dependency on currentTimeMs might cause 60fps re-bind?
+
+    // Handle Resize for Centering
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const ro = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                setContainerSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+            }
+        });
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
+
+    // Derived Video URL for "Loading" state check
+    const hasActiveProject = Object.keys(project.sources).length > 0;
 
     // Optimization: Don't depend on currentTimeMs in effect dependency if possible.
     // But we need the initial value. 
@@ -245,6 +160,11 @@ function Editor() {
     // Visualization Update Loop
     // Removed overlay visualization logic as it moved to PlayerCanvas
 
+
+    // Derived State from Project (Restored for Layout/Debug)
+    const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
+    // TODO: Do not rely on source[0], find the correct active source or main source.
+    const inputVideoSize = Object.values(project.sources || {})[0]?.size || null;
 
     // Calculate Rendered Rect (for overlay positioning)
     let renderedStyle = {};
@@ -318,7 +238,8 @@ function Editor() {
                             overflow: 'hidden'
                         }}
                     >
-                        {videoUrl && (
+
+                        {hasActiveProject && (
                             <div
                                 className="bg-blue-200"
                                 style={{ position: 'relative', ...renderedStyle }}
@@ -326,20 +247,15 @@ function Editor() {
                                 onMouseLeave={handleMouseLeave}
                             >
                                 <PlayerCanvas
-                                    ref={videoRef}
-                                    src={videoUrl}
-                                    onLoadedMetadata={onVideoLoaded}
-                                    muted
+                                    className="w-full h-full"
                                     debugCameraMode={debugCameraMode}
                                 />
 
                                 {/* All event markers (faint) */}
-                                {metadata.map(() => {
-                                    return null;
-                                })}
+                                {/* metadata logic moved to tracks, removing manual overlay map if any */}
                             </div>
                         )}
-                        {!videoUrl && <div className="text-white">Loading...</div>}
+                        {!hasActiveProject && <div className="text-white">Loading Project...</div>}
                     </div>
 
                     {/* Tooltip */}
@@ -380,10 +296,10 @@ function Editor() {
                     </div>
                     <div className="flex-1 flex flex-col overflow-hidden">
                         <div className="flex-1 flex flex-col overflow-hidden min-h-0 border-b border-[#333]">
-                            <EventInspector metadata={metadata} />
+                            <EventInspector metadata={inputVideoSize ? Object.values(project.sources)[0]?.events || [] : []} />
                         </div>
                         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-                            <HoverInspector events={metadata} inputSize={inputVideoSize} />
+                            <HoverInspector events={inputVideoSize ? Object.values(project.sources)[0]?.events || [] : []} inputSize={inputVideoSize || { width: 1920, height: 1080 }} />
                         </div>
                     </div>
                 </div>
