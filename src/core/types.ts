@@ -38,8 +38,11 @@ export interface Project {
     createdAt: Date;
     updatedAt: Date;
 
-    /** Global output settings for rendering */
+    /* Global output settings for rendering */
     outputSettings: OutputSettings;
+
+    /* Background configuration for the canvas */
+    background: BackgroundSettings;
 
     /**
      * Map of all Source assets used in the project.
@@ -47,7 +50,7 @@ export interface Project {
      */
     sources: Record<ID, Source>;
 
-    /** The main timeline containing tracks and clips */
+    /* The main timeline containing tracks and clips */
     timeline: Timeline;
 }
 
@@ -307,3 +310,11 @@ export interface ZoomConfig {
     zoomOffset: number;   // Start time relative to event timestamp (e.g. -2000ms starts 2s before)
 }
 
+
+export type BackgroundType = 'solid' | 'image';
+
+export interface BackgroundSettings {
+    type: BackgroundType;
+    color?: string; // Hex code, e.g. #FFFFFF
+    imageUrl?: string; // Path to image (e.g. /assets/backgrounds/foo.jpg)
+}

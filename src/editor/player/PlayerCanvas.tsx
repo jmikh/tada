@@ -25,6 +25,9 @@ export const PlayerCanvas = () => {
     const animationFrameRef = useRef<number>(0);
     const lastTimeRef = useRef<number>(0);
 
+    // Background Image Ref
+    const bgRef = useRef<HTMLImageElement>(null);
+
     // Single Effect to manage the Loop for the lifetime of the component
     useEffect(() => {
         const tick = (time: number) => {
@@ -74,6 +77,54 @@ export const PlayerCanvas = () => {
 
         // Clear
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Background
+        if (project.background) {
+            // 1. Solid Color
+            if (project.background.type === 'solid' && project.background.color) {
+                ctx.fillStyle = project.background.color;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            // 2. Image (Cover Mode)
+            else if (project.background.type === 'image' && bgRef.current && project.background.imageUrl) {
+                const img = bgRef.current;
+                if (img.complete && img.naturalWidth > 0) {
+                    const imgW = img.naturalWidth;
+                    const imgH = img.naturalHeight;
+                    const canvasW = canvas.width;
+                    const canvasH = canvas.height;
+
+                    const imgRatio = imgW / imgH;
+                    const canvasRatio = canvasW / canvasH;
+
+                    let drawW = canvasW;
+                    let drawH = canvasH;
+                    let offsetX = 0;
+                    let offsetY = 0;
+
+                    // "Cover" Logic: Zoom to fill entire canvas without stretching
+                    if (imgRatio > canvasRatio) {
+                        // Image is wider than canvas (relatively) -> constrained by Height
+                        // Scale image so Height matches Canvas Height
+                        drawH = canvasH;
+                        drawW = drawH * imgRatio;
+
+                        // Center horizontally
+                        offsetX = -(drawW - canvasW) / 2;
+                    } else {
+                        // Image is taller/narrower -> constrained by Width
+                        // Scale image so Width matches Canvas Width
+                        drawW = canvasW;
+                        drawH = drawW / imgRatio;
+
+                        // Center vertically
+                        offsetY = -(drawH - canvasH) / 2;
+                    }
+
+                    ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+                }
+            }
+        }
 
         // Resolve Render State
         let renderState;
@@ -167,6 +218,15 @@ export const PlayerCanvas = () => {
         <>
             {/* Hidden Source Container */}
             <div style={{ display: 'none' }}>
+                {project.background?.type === 'image' && project.background.imageUrl && (
+                    <img
+                        ref={bgRef}
+                        src={project.background.imageUrl}
+                        alt="Background Asset"
+                        onLoad={() => renderPipeline()}
+                    />
+                )}
+
                 {Object.values(sources).map((source) => (
                     source.url ? (
                         <video

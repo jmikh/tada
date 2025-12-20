@@ -39,6 +39,10 @@ export class ProjectImpl {
             outputSettings: {
                 size: { width: 3840, height: 2160 },
                 frameRate: 30
+            },
+            background: {
+                type: 'solid',
+                color: '#1e1e1e'
             }
         };
     }

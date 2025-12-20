@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PlayerCanvas } from './player/PlayerCanvas';
+import { BackgroundPanel } from './BackgroundPanel';
 // import { useEditorStore } from './store'; // REMOVED
 import { loadSessionData } from './session/sessionLoader';
 import { useProjectStore, useProjectData, useMaxZoom } from './stores/useProjectStore';
@@ -224,6 +225,7 @@ function Editor() {
     return (
         <div className="w-full h-screen bg-black flex flex-col overflow-hidden">
             <div className="flex-1 flex overflow-hidden">
+                <BackgroundPanel />
                 <div
                     id="video-player-container"
                     className="flex-1 flex overflow-hidden relative items-center justify-center bg-[#1e1e1e]"

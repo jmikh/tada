@@ -78,6 +78,14 @@ export const useProjectStore = create<ProjectState>()(
             name: 'recordo-project-storage', // name of the item in the storage (must be unique)
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({ project: state.project }), // Only persist the project
+            onRehydrateStorage: () => (state) => {
+                if (state && state.project && !state.project.background) {
+                    state.project.background = {
+                        type: 'solid',
+                        color: '#1e1e1e'
+                    };
+                }
+            }
         }
     )
 );
