@@ -134,9 +134,10 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             }
         } catch { /* ignore render errors to prevent crash loop */ }
 
-        // 3. Clear Screen if No Active Clip
+        // 3. Clear Screen if No Active Clip (or always clear first)
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         if (!activeClip) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
             return;
         }
 
@@ -153,84 +154,72 @@ export const PlayerCanvas = forwardRef<HTMLVideoElement, PlayerCanvasProps>(({
             paddingPercentage
         );
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // 6. Calculate Camera State (Source Zoom)
-        // We want the camera state at the current TIMELINE time relative to the track/clip? 
-        // `activeClip` gives us the scheduled clip.
-        // `cameraMotion.ts` logic takes `timeMs` and `motions`.
-        // The `motions` are defined on the TRACK timeline (global timeline time).
-        // So we pass `currentTimeMs`.
-
-        const sourceRect = getCameraStateAtTime(
+        // 6. Calculate Camera State (Output Space Window)
+        const cameraWindow = getCameraStateAtTime(
             activeTrackMotions || [],
             currentTimeMs,
-            freshInputSize
+            freshOutputSize // Use Output Size for "Full View" reference
         );
 
         // 7. Draw the Frame
-        // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
-
-        const { x, y, width, height } = config.projectedBox;
 
         if (debugCameraMode === 'visualize') {
-            // A. Full Picture + Rectangle
-            // 1. Draw full video to fit canvas
-            ctx.drawImage(video, x, y, width, height);
+            // A. Visualize Mode:
+            // 1. Draw Full Content (Zoom 1x view)
+            // Camera = Full Output
+            const fullView = { x: 0, y: 0, width: freshOutputSize.width, height: freshOutputSize.height };
+            const renderRects = config.resolveRenderRects(fullView);
 
-            // 2. Draw Debug Rect
-            // sourceRect is in Source Coordinates. We need to project it to Canvas Coordinates.
-            // Canvas "full" area is defined by projectedBox (x, y, width, height).
-            // Scale factors:
-            const scaleX = width / freshInputSize.width;
-            const scaleY = height / freshInputSize.height;
+            if (renderRects) {
+                ctx.drawImage(
+                    video,
+                    renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
+                    renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
+                );
+            }
 
-            const rectX = x + sourceRect.x * scaleX;
-            const rectY = y + sourceRect.y * scaleY;
-            const rectW = sourceRect.width * scaleX;
-            const rectH = sourceRect.height * scaleY;
-
+            // 2. Draw Camera Window (Green Box)
+            // cameraWindow is already in Output/Canvas Space.
             ctx.strokeStyle = '#00ff00';
             ctx.lineWidth = 4;
-            ctx.strokeRect(rectX, rectY, rectW, rectH);
+            ctx.strokeRect(cameraWindow.x, cameraWindow.y, cameraWindow.width, cameraWindow.height);
+
+            // 3. Draw Content Rect (Blue Box) - Optional, helpful for debugging constraints
+            ctx.strokeStyle = 'rgba(0, 100, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(config.contentRect.x, config.contentRect.y, config.contentRect.width, config.contentRect.height);
 
         } else {
-            // B. Actual Camera Zoom
-            ctx.drawImage(
-                video,
-                sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height,
-                x, y, width, height
-            );
+            // B. Active Mode: Actual Camera View
+            const renderRects = config.resolveRenderRects(cameraWindow);
+
+            if (renderRects) {
+                ctx.drawImage(
+                    video,
+                    renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
+                    renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
+                );
+            } else {
+                // If null, it means we are looking at purely padding.
+                // Draw nothing (already cleared) or draw background color?
+            }
         }
 
         // 8. Draw Mouse Effects (Overlay)
-        // Only draw if we have effects and are not in pure debug mode (or maybe allow it in debug too?)
-        // Let's allow it, but we need correct coordinate mapping.
         if (activeTrackMouseEffects && activeTrackMouseEffects.length > 0) {
-            // Define Destination Rect (Canvas Draw Area)
-            // If debug mode 'visualize', dest is the centered box containing full video.
-            // If debug mode 'active', dest is the centered box containing ZOOMED video.
+            // Determine the "Camera" we are drawing into.
+            // In 'visualize' mode, we are drawing into the "Full View" camera.
+            // In 'active' mode, we are drawing into the actual `cameraWindow`.
 
-            // Fortunately `getCameraStateAtTime` returns `sourceRect`.
-            // And `config.projectedBox` returns the layout on canvas `destRect` (x,y,w,h).
-            // BUT:
-            // In 'visualize' mode: 'sourceRect' used for drawing is FULL rect? No. 
-            // In 'visualize' mode logic:
-            //   ctx.drawImage(video, x, y, width, height); -> Input is Full Frame. 
-            //   So effective "sourceRect" for the projection of mouse events is the FULL frame {0,0,w,h}.
-            // In 'active' mode:
-            //   ctx.drawImage(video, sourceRect...) -> Input is Zoomed Frame.
-            //   So effective "sourceRect" is `sourceRect`.
-
-            const effectiveSourceRect = (debugCameraMode === 'visualize')
-                ? { x: 0, y: 0, width: freshInputSize.width, height: freshInputSize.height }
-                : sourceRect;
+            const effectiveCamera = (debugCameraMode === 'visualize')
+                ? { x: 0, y: 0, width: freshOutputSize.width, height: freshOutputSize.height }
+                : cameraWindow;
 
             drawMouseEffects(
                 ctx,
                 activeTrackMouseEffects,
                 currentTimeMs,
-                effectiveSourceRect,
+                effectiveCamera,
                 config
             );
         }

@@ -7,13 +7,14 @@ import type { ViewTransform, Rect } from '../../core/effects/viewTransform';
  * @param ctx 2D Canvas Context
  * @param effects List of mouse effects to draw
  * @param currentTimeMs Current playback time
+ * @param cameraWindow Current Camera Window (Output Space)
  * @param config Transformation Config
  */
 export function drawMouseEffects(
     ctx: CanvasRenderingContext2D,
     effects: MouseEffect[],
     currentTimeMs: number,
-    sourceRect: Rect, // Current Camera Frame
+    cameraWindow: Rect, // Current Camera Window (Output Space)
     config: ViewTransform // Transformation Config
 ) {
     // Draw Clicks
@@ -27,8 +28,8 @@ export function drawMouseEffects(
             const duration = effect.timeOutMs - effect.timeInMs;
             const progress = Math.min(1, Math.max(0, elapsed / duration));
 
-            // Project Center
-            const center = config.project(effect.start, sourceRect);
+            // Project Center (Input -> Screen)
+            const center = config.projectToScreen(effect.start, cameraWindow);
 
             // Draw Ripple
             const maxRadius = 40; // px
@@ -54,7 +55,7 @@ export function drawMouseEffects(
                 const currentPoint = getPointAtTime(effect.path, currentTimeMs);
 
                 // Project
-                const screenPoint = config.project(currentPoint, sourceRect);
+                const screenPoint = config.projectToScreen(currentPoint, cameraWindow);
 
                 // Draw Cursor Representative
                 ctx.beginPath();

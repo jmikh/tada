@@ -128,13 +128,13 @@ export function calculateZoomSchedule(
         return motions;
     }
 
-    // 2. Prepare for Zoom Level Calculation (Source Space)
-    // We assume 'zoomIntensity' means "Scale Factor relative to full view".
+    // 2. Prepare for Zoom Level Calculation (Output Space)
+    // Zoom 1x = Full Output Size.
+    // Zoom 2x = Half Output Size (centered).
     const zoomLevel = config.zoomIntensity;
 
-    // Derived Crop Dimensions in Source Coordinates
-    const baseCropWidth = mappingConfig.inputVideoSize.width / zoomLevel;
-    const baseCropHeight = mappingConfig.inputVideoSize.height / zoomLevel;
+    const targetWidth = mappingConfig.outputVideoSize.width / zoomLevel;
+    const targetHeight = mappingConfig.outputVideoSize.height / zoomLevel;
 
     // Default duration for a zoom "scene" around a click
     const ZOOM_HOLD_DURATION = config.zoomDuration || 2000;
@@ -143,24 +143,33 @@ export function calculateZoomSchedule(
     for (let i = 0; i < clickEvents.length; i++) {
         const evt = clickEvents[i];
 
-        // Calculate Target Box (Centered on Click, in SOURCE COORDINATES)
-        let newBox: Rect = {
-            x: evt.x - baseCropWidth / 2,
-            y: evt.y - baseCropHeight / 2,
-            width: baseCropWidth,
-            height: baseCropHeight
+        // 1. Map Click to Output Space
+        const clickOutput = mappingConfig.inputToOutput({ x: evt.x, y: evt.y });
+
+        // 2. Center CameraWindow on Click
+        let targetX = clickOutput.x - targetWidth / 2;
+        let targetY = clickOutput.y - targetHeight / 2;
+
+        // 3. Clamp to Output Space Edges
+        // The CameraWindow must stay within the Output Canvas (0,0 -> OutputW, OutputH)
+        // (Unless zoomLevel < 1, which implies window > output, then we adjust differently...
+        // assuming zoom >= 1 for now).
+
+        const maxX = mappingConfig.outputVideoSize.width - targetWidth;
+        const maxY = mappingConfig.outputVideoSize.height - targetHeight;
+
+        if (targetX < 0) targetX = 0;
+        else if (targetX > maxX) targetX = maxX;
+
+        if (targetY < 0) targetY = 0;
+        else if (targetY > maxY) targetY = maxY;
+
+        const newBox: Rect = {
+            x: targetX,
+            y: targetY,
+            width: targetWidth,
+            height: targetHeight
         };
-
-        // Shift-Clamping (Stay within Source Video)
-        if (newBox.x < 0) newBox.x = 0;
-        else if (newBox.x > mappingConfig.inputVideoSize.width - newBox.width) {
-            newBox.x = mappingConfig.inputVideoSize.width - newBox.width;
-        }
-
-        if (newBox.y < 0) newBox.y = 0;
-        else if (newBox.y > mappingConfig.inputVideoSize.height - newBox.height) {
-            newBox.y = mappingConfig.inputVideoSize.height - newBox.height;
-        }
 
         // Timing Logic
         const timeIn = Math.max(0, evt.timestamp - ZOOM_TRANSITION_DURATION);
@@ -183,11 +192,11 @@ export function calculateZoomSchedule(
         if (nextEvt && nextEvt.timestamp < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
             // Stay zoomed
         } else {
-            // Zoom OUT to full view
+            // Zoom OUT to full view (Output Space)
             const fullView: Rect = {
                 x: 0, y: 0,
-                width: mappingConfig.inputVideoSize.width,
-                height: mappingConfig.inputVideoSize.height
+                width: mappingConfig.outputVideoSize.width,
+                height: mappingConfig.outputVideoSize.height
             };
 
             const zoomOutStart = Math.max(arrivalTime + 1000, arrivalTime + 500);
@@ -218,7 +227,7 @@ export interface Rect {
 }
 
 /**
- * Calculates the current visible rectangle (in Source Coordinates)
+ * Calculates the current CameraWindow (in Output Space)
  * based on the list of motions and the current time.
  */
 export function getCameraStateAtTime(
@@ -226,7 +235,7 @@ export function getCameraStateAtTime(
     timeMs: number,
     fullSize: Size
 ): Rect {
-    // 0. Base Case: Full View
+    // 0. Base Case: Full View (Output Space)
     const fullRect: Rect = { x: 0, y: 0, width: fullSize.width, height: fullSize.height };
 
     if (!motions || motions.length === 0) {

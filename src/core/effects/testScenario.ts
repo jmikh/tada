@@ -64,11 +64,16 @@ function runTest(scenarioName: string) {
 
     console.log("--- Running Assertions ---");
 
-    assert.strictEqual(schedule.length, 3, "Should have 3 motions");
+    // We expect 4 motions:
+    // 0: Zoom In (Click 1)
+    // 1: Zoom In (Click 2)
+    // 2: Zoom In (Click 3)
+    // 3: Zoom Out (End of sequence)
+    assert.strictEqual(schedule.length, 4, "Should have 4 motions");
 
-    // Target Box Size Calculation:
-    // Input 2000. Zoom 2. Target Size = 1000.
-    const expectedSize = 1000;
+    // Target Box Size Calculation (Output Space):
+    // Output 1000. Zoom 2. Target Size = 500.
+    const expectedSize = 500;
 
     // Verify Sizes
     for (let i = 0; i < 3; i++) {
@@ -76,23 +81,23 @@ function runTest(scenarioName: string) {
         assert.strictEqual(schedule[i].target.height, expectedSize, `M${i} Height incorrect`);
     }
 
-    // Motion 0: Click (0,0)
-    // Box Center (0,0). TopLeft (-500, -500). Clamped to (0,0).
+    // Motion 0: Click (0,0) Input -> (0,0) Output
+    // Box Center (0,0). TopLeft (-250, -250). Clamped to (0,0).
     assert.strictEqual(schedule[0].target.x, 0, "M0 X incorrect");
     assert.strictEqual(schedule[0].target.y, 0, "M0 Y incorrect");
 
-    // Motion 1: Click (1000, 1000)
-    // Box Center (1000,1000). TopLeft (500, 500).
-    // Right Edge = 500 + 1000 = 1500 <= 2000. Valid.
-    assert.strictEqual(schedule[1].target.x, 500, "M1 X incorrect");
-    assert.strictEqual(schedule[1].target.y, 500, "M1 Y incorrect");
+    // Motion 1: Click (1000, 1000) Input -> (500, 500) Output
+    // Box Center (500,500). TopLeft (250, 250).
+    // Right Edge = 250 + 500 = 750 <= 1000. Valid.
+    assert.strictEqual(schedule[1].target.x, 250, "M1 X incorrect");
+    assert.strictEqual(schedule[1].target.y, 250, "M1 Y incorrect");
 
-    // Motion 2: Click (2000, 2000)
-    // Box Center (2000,2000). TopLeft (1500, 1500).
-    // Right Edge = 1500 + 1000 = 2500 > 2000.
-    // Clamped X = 2000 - 1000 = 1000.
-    assert.strictEqual(schedule[2].target.x, 1000, "M2 X incorrect");
-    assert.strictEqual(schedule[2].target.y, 1000, "M2 Y incorrect");
+    // Motion 2: Click (2000, 2000) Input -> (1000, 1000) Output
+    // Box Center (1000,1000). TopLeft (750, 750).
+    // Box MaxX = 1000 - 500 = 500.
+    // Clamped X = 500.
+    assert.strictEqual(schedule[2].target.x, 500, "M2 X incorrect");
+    assert.strictEqual(schedule[2].target.y, 500, "M2 Y incorrect");
 
     console.log(`✅ Scenario '${scenarioName}' Passed!`);
 }
