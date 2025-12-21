@@ -12,11 +12,15 @@ export interface RenderState {
     /** List of tracks to render, possibly containing a resolved clip frame */
     tracks: {
         trackId: ID;
+        visible: boolean;
         clip?: {
             id: ID;
             source: Source;
             /** The specific timestamp within the source media to render */
             sourceTimeMs: TimeMs;
+            speed: number;
+            volume: number;
+            muted: boolean;
         };
     }[];
 }
@@ -97,29 +101,45 @@ export class ProjectImpl {
         if (project.timeline.overlayTrack) tracksToCheck.push(project.timeline.overlayTrack);
 
         for (const track of tracksToCheck) {
-            if (!track.muted && track.visible) {
-                // Find clip at time
-                const clip = TrackImpl.findClipAtTime(track, timeMs);
+            // Processing logic:
+            // Valid if: Clip exists at time. 
+            // Visibility: handled by caller (PlayerCanvas) using 'visible' flag.
+            // Audio: handled by caller using 'muted'/'volume' flags on clip.
 
-                if (clip) {
-                    const source = project.sources[clip.sourceId];
-                    if (source) {
-                        // Calculate Source Time
-                        const offset = (timeMs - clip.timelineInMs) * clip.speed;
-                        const sourceTimeMs = clip.sourceInMs + offset;
+            // Find clip at time
+            const clip = TrackImpl.findClipAtTime(track, timeMs);
 
-                        result.tracks.push({
-                            trackId: track.id,
-                            clip: {
-                                id: clip.id,
-                                source,
-                                sourceTimeMs
-                            }
-                        });
-                    }
-                } else {
-                    result.tracks.push({ trackId: track.id });
+            if (clip) {
+                const source = project.sources[clip.sourceId];
+                if (source) {
+                    // Calculate Source Time
+                    const offset = (timeMs - clip.timelineInMs) * clip.speed;
+                    const sourceTimeMs = clip.sourceInMs + offset;
+
+                    // Calculate effective mute/volume
+                    // Track mute overrides clip mute (or combines?)
+                    // Usually Track Mute = silence whole track.
+                    const isMuted = track.muted || clip.audioMuted;
+
+                    result.tracks.push({
+                        trackId: track.id,
+                        visible: track.visible,
+                        clip: {
+                            id: clip.id,
+                            source,
+                            sourceTimeMs,
+                            speed: clip.speed,
+                            volume: clip.audioVolume,
+                            muted: isMuted
+                        }
+                    });
                 }
+            } else {
+                // Return track info even if empty (optional, but good for consistency)
+                result.tracks.push({
+                    trackId: track.id,
+                    visible: track.visible
+                });
             }
         }
 

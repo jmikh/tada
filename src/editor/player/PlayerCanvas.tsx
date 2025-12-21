@@ -99,27 +99,13 @@ export const PlayerCanvas = () => {
             const isMainTrack = trackItem.trackId === project.timeline.mainTrack.id;
 
             if (video) {
-                // A. Sync Video Time
+                // A. Sync Video Time & Audio
                 const desiredTimeS = clip.sourceTimeMs / 1000;
-                // Resolve speed
-                // Ideally we find the specific clip object in the track, but clip.speed might be on the clip object in trackItem? 
-                // Wait, ProjectImpl.getRenderState puts 'clip' (which is the object from standard definition) into renderState?
-                // Yes, the clip object inside renderState has 'id', 'source', 'sourceTimeMs'. 
-                // It does NOT have 'speed' directly unless ProjectImpl included it.
-                // ProjectImpl spreads properties? No, it constructs a new object.
-                // We should update ProjectImpl to include speed OR look it up.
-                // Looking up is expensive in loop.
-                // Let's assume for now speed is 1 or look it up efficiently?
-                // Actually `clip` in `trackItem` has `.id`. We can find it in the project tracks.
 
-                // Fast lookup:
-                let originalClip = null;
-                if (isMainTrack) {
-                    originalClip = project.timeline.mainTrack.clips.find(c => c.id === clip.id);
-                } else if (project.timeline.overlayTrack && trackItem.trackId === project.timeline.overlayTrack.id) {
-                    originalClip = project.timeline.overlayTrack.clips.find(c => c.id === clip.id);
-                }
-                const speed = originalClip?.speed || 1;
+                // Read processed clip properties from RenderState
+                const speed = clip.speed ?? 1;
+                const volume = clip.volume ?? 1;
+                const muted = clip.muted ?? false;
 
                 if (playback.isPlaying) {
                     if (video.paused) video.play().catch(() => { });
@@ -130,36 +116,42 @@ export const PlayerCanvas = () => {
                     if (Math.abs(video.currentTime - desiredTimeS) > 0.001) video.currentTime = desiredTimeS;
                 }
 
-                // B. Draw
-                const inputSize = video.videoWidth && video.videoHeight
-                    ? { width: video.videoWidth, height: video.videoHeight }
-                    : clip.source.size;
+                // Sync Audio Props
+                if (video.volume !== volume) video.volume = volume;
+                if (video.muted !== muted) video.muted = muted;
 
-                if (!inputSize) continue;
+                // B. Draw (Only if visible)
+                if (trackItem.visible) {
+                    const inputSize = video.videoWidth && video.videoHeight
+                        ? { width: video.videoWidth, height: video.videoHeight }
+                        : clip.source.size;
 
-                if (isMainTrack) {
-                    // MAIN TRACK RENDERING (Viewport Motion)
-                    const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
-                    const track = project.timeline.mainTrack;
-                    const viewportMotions = track?.viewportMotions || [];
-                    const effectiveViewport = getViewportStateAtTime(viewportMotions, currentTimeMs, outputSize); // Use global zoom logic
+                    if (!inputSize) continue;
 
-                    const renderRects = config.resolveRenderRects(effectiveViewport);
+                    if (isMainTrack) {
+                        // MAIN TRACK RENDERING (Viewport Motion)
+                        const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
+                        const track = project.timeline.mainTrack;
+                        const viewportMotions = track?.viewportMotions || [];
+                        const effectiveViewport = getViewportStateAtTime(viewportMotions, currentTimeMs, outputSize); // Use global zoom logic
 
-                    if (renderRects) {
-                        ctx.drawImage(
-                            video,
-                            renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
-                            renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
-                        );
+                        const renderRects = config.resolveRenderRects(effectiveViewport);
+
+                        if (renderRects) {
+                            ctx.drawImage(
+                                video,
+                                renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
+                                renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
+                            );
+                        }
+
+                        if (track.mouseEffects) {
+                            drawMouseEffects(ctx, track.mouseEffects, currentTimeMs, effectiveViewport, config);
+                        }
+                    } else {
+                        // OVERLAY TRACK RENDERING (PIP)
+                        drawWebcam(ctx, video, outputSize, inputSize);
                     }
-
-                    if (track.mouseEffects) {
-                        drawMouseEffects(ctx, track.mouseEffects, currentTimeMs, effectiveViewport, config);
-                    }
-                } else {
-                    // OVERLAY TRACK RENDERING (PIP)
-                    drawWebcam(ctx, video, outputSize, inputSize);
                 }
             }
         }
@@ -215,7 +207,7 @@ export const PlayerCanvas = () => {
                             }}
                             src={source.url}
                             onLoadedMetadata={(e) => handleMetadata(source.id, e)}
-                            muted={true}
+                            muted={false}
                             playsInline
                             crossOrigin="anonymous"
                         />
