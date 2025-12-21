@@ -53,14 +53,21 @@ export function Timeline() {
     const [isCTIScrubbing, setIsCTIScrubbing] = useState(false);
 
     // Dragging State
-    const [draggingId, setDraggingId] = useState<string | null>(null);
-    const [dragType, setDragType] = useState<'left' | 'right' | null>(null);
-    const [dragStartX, setDragStartX] = useState(0);
-    const [dragStartTrackId, setDragStartTrackId] = useState<string | null>(null);
+    interface DragState {
+        clipId: string;
+        trackId: string;
+        type: 'left' | 'right';
+        startX: number;
+        initialClip: Clip;
+        currentClip: Clip; // The modified clip (visual state)
+        constraints: {
+            minTimelineIn: number;
+            maxTimelineIn: number;
+            maxSourceDuration: number;
+        };
+    }
 
-    // Snapshot of clip BEFORE drag starts, to calculate deltas correctly
-    // We store the COPY of the clip to avoid reference issues.
-    const [initialClipState, setInitialClipState] = useState<Clip | null>(null);
+    const [dragState, setDragState] = useState<DragState | null>(null);
 
     // --- Mouse Handlers ---
 
@@ -100,78 +107,69 @@ export function Timeline() {
 
     // --- Dragging Logic for Trimming ---
     useEffect(() => {
-        if (!draggingId || !dragType || !initialClipState || !dragStartTrackId) return;
+        if (!dragState) return;
 
         const handleGlobalMouseMove = (e: MouseEvent) => {
-            const deltaX = e.clientX - dragStartX;
+            const deltaX = e.clientX - dragState.startX;
             const deltaMs = (deltaX / pixelsPerSec) * 1000;
-            const clip = initialClipState;
-
-            // Find the track for this clip using the saved trackId
-            let track = null;
-            if (dragStartTrackId === timeline.mainTrack.id) {
-                track = timeline.mainTrack;
-            } else if (timeline.overlayTrack && dragStartTrackId === timeline.overlayTrack.id) {
-                track = timeline.overlayTrack;
-            }
-
-            if (!track || !track.clips.some(c => c.id === clip.id)) return;
+            const clip = dragState.initialClip;
+            const { minTimelineIn, maxTimelineIn } = dragState.constraints;
 
             let newClip = { ...clip };
 
-            if (dragType === 'left') {
-                // Moving Start: Affects timelineIn AND sourceIn
-                // Delta is additive. 
-                // Ex: Drag right (+100ms). Start moves later.
-                // sourceIn increases by delta * speed.
+            if (dragState.type === 'left') {
+                // Moving Start
+                const proposedTimelineIn = clip.timelineInMs + deltaMs;
 
-                // Constraints:
-                // 1. Cannot move past end (timelineIn < timelineOut)
-                // 2. Cannot move before 0 (timelineIn >= 0)
-                // 3. sourceIn cannot exceed sourceOut
-                // 4. sourceIn cannot be < 0
+                // CLAMP 1: Boundary check
+                const clampedTimelineIn = Math.min(Math.max(proposedTimelineIn, minTimelineIn), maxTimelineIn);
 
-                const proposedTimelineIn = Math.max(0, clip.timelineInMs + deltaMs);
-                const timelineDelta = proposedTimelineIn - clip.timelineInMs;
-                const sourceDelta = timelineDelta * clip.speed; // if speed 2x, 1s timeline = 2s source
+                // Calculate valid delta based on clamped value
+                const finalTimelineDelta = clampedTimelineIn - clip.timelineInMs;
+                const sourceDelta = finalTimelineDelta * clip.speed;
 
                 const proposedSourceIn = clip.sourceInMs + sourceDelta;
 
-                // Check invalid duration
+                // CLAMP 2: Source Content check
                 if (proposedSourceIn >= clip.sourceOutMs) return;
 
-                newClip.timelineInMs = proposedTimelineIn;
+                newClip.timelineInMs = clampedTimelineIn;
                 newClip.sourceInMs = proposedSourceIn;
 
             } else {
-                // Moving End: Affects sourceOut only (timelineIn constant)
-                // Ex: Drag right (+100ms). Duration increases.
-                // sourceOut increases.
-
-                // Timeline delta is what we see. Source delta derived.
+                // Moving End
                 const sourceDelta = deltaMs * clip.speed;
                 const proposedSourceOut = clip.sourceOutMs + sourceDelta;
 
-                // Check invalid duration (sourceIn < sourceOut)
-                if (proposedSourceOut <= clip.sourceInMs) return;
+                const proposedTimelineDuration = (proposedSourceOut - clip.sourceInMs) / clip.speed;
+                const proposedTimelineOut = clip.timelineInMs + proposedTimelineDuration;
 
-                // Check Max Source Duration? (Source constraints not strictly enforced here but should be)
-                // Assuming we can extend infinitely for now or relying on validation to fail/clamp?
-                // Ideally we clamp to source media duration.
-                // Assuming infinite source for now or user responsibility.
+                let validSourceOut = proposedSourceOut;
 
-                newClip.sourceOutMs = proposedSourceOut;
+                // Check Max Timeline Boundary
+                if (proposedTimelineOut > dragState.constraints.maxTimelineIn) {
+                    const maxDurationMs = dragState.constraints.maxTimelineIn - clip.timelineInMs;
+                    validSourceOut = clip.sourceInMs + (maxDurationMs * clip.speed);
+                }
+
+                // Check Min Duration
+                if (validSourceOut <= clip.sourceInMs) {
+                    validSourceOut = clip.sourceInMs + 100; // Min 100ms
+                }
+
+                newClip.sourceOutMs = validSourceOut;
             }
 
-            // Dispatch Update
-            updateClip(track.id, newClip);
+            // UPDATE LOCAL STATE, NOT STORE
+            setDragState(prev => prev ? { ...prev, currentClip: newClip } : null);
         };
 
         const handleGlobalMouseUp = () => {
-            setDraggingId(null);
-            setDragType(null);
-            setInitialClipState(null);
-            setDragStartTrackId(null);
+            // COMMIT TO STORE
+            if (dragState) {
+                updateClip(dragState.trackId, dragState.currentClip);
+            }
+            setDragState(null);
         };
 
         window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -181,34 +179,61 @@ export function Timeline() {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [draggingId, dragType, dragStartX, dragStartTrackId, initialClipState, pixelsPerSec, timeline, updateClip]);
+    }, [dragState, pixelsPerSec, updateClip]);
 
     const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right', trackId: string) => {
         e.preventDefault();
         e.stopPropagation();
 
         // Find the clip object (Search in the specified track)
-        let foundClip: Clip | null = null;
         let track = null;
-
         if (trackId === timeline.mainTrack.id) {
             track = timeline.mainTrack;
         } else if (timeline.overlayTrack && trackId === timeline.overlayTrack.id) {
             track = timeline.overlayTrack;
         }
 
-        if (track) {
-            const c = track.clips.find(c => c.id === id);
-            if (c) foundClip = c;
+        if (!track) return;
+
+        const clipIndex = track.clips.findIndex(c => c.id === id);
+        if (clipIndex === -1) return;
+
+        const clip = track.clips[clipIndex];
+
+        // --- Calculate Constraints ---
+        let minTimelineIn = 0;
+        let maxTimelineIn = Infinity;
+
+        if (type === 'left') {
+            // LEFT Handle: 
+            if (clipIndex > 0) {
+                const prevClip = track.clips[clipIndex - 1];
+                minTimelineIn = prevClip.timelineInMs + (prevClip.sourceOutMs - prevClip.sourceInMs) / prevClip.speed;
+            }
+            // Max is constrained by current End
+            const timelineOut = clip.timelineInMs + (clip.sourceOutMs - clip.sourceInMs) / clip.speed;
+            maxTimelineIn = timelineOut - 100;
+        } else {
+            // RIGHT Handle:
+            if (clipIndex < track.clips.length - 1) {
+                const nextClip = track.clips[clipIndex + 1];
+                maxTimelineIn = nextClip.timelineInMs;
+            }
         }
 
-        if (foundClip) {
-            setDraggingId(id);
-            setDragType(type);
-            setDragStartX(e.clientX);
-            setDragStartTrackId(trackId);
-            setInitialClipState(foundClip);
-        }
+        setDragState({
+            clipId: id,
+            trackId,
+            type,
+            startX: e.clientX,
+            initialClip: clip,
+            currentClip: clip,
+            constraints: {
+                minTimelineIn,
+                maxTimelineIn,
+                maxSourceDuration: Infinity // TODO
+            }
+        });
     };
 
     // --- Format Helper ---
@@ -278,10 +303,17 @@ export function Timeline() {
                         {/* Render Main Video Track */}
                         {(() => {
                             const track = timeline.mainTrack;
+                            // Optimistic Update: Replace dragged clip in the list
+                            const displayClips = track.clips.map(c =>
+                                (dragState && dragState.trackId === track.id && dragState.clipId === c.id)
+                                    ? dragState.currentClip
+                                    : c
+                            );
+
                             return (
                                 <div key={track.id} className="flex flex-col">
                                     <TimelineTrackVideo
-                                        clips={track.clips}
+                                        clips={displayClips}
                                         pixelsPerSec={pixelsPerSec}
                                         trackHeight={TRACK_HEIGHT}
                                         onDragStart={(e, id, type) => handleDragStart(e, id, type, track.id)}
@@ -305,12 +337,24 @@ export function Timeline() {
                         {/* Render Overlay Track */}
                         {timeline.overlayTrack && timeline.overlayTrack.visible && (
                             <div key={timeline.overlayTrack.id} className="flex flex-col mt-4">
-                                <TimelineTrackVideo
-                                    clips={timeline.overlayTrack.clips}
-                                    pixelsPerSec={pixelsPerSec}
-                                    trackHeight={TRACK_HEIGHT}
-                                    onDragStart={(e, id, type) => handleDragStart(e, id, type, timeline.overlayTrack!.id)}
-                                />
+                                {(() => {
+                                    const track = timeline.overlayTrack!;
+                                    // Optimistic Update
+                                    const displayClips = track.clips.map(c =>
+                                        (dragState && dragState.trackId === track.id && dragState.clipId === c.id)
+                                            ? dragState.currentClip
+                                            : c
+                                    );
+
+                                    return (
+                                        <TimelineTrackVideo
+                                            clips={displayClips}
+                                            pixelsPerSec={pixelsPerSec}
+                                            trackHeight={TRACK_HEIGHT}
+                                            onDragStart={(e, id, type) => handleDragStart(e, id, type, track.id)}
+                                        />
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>
