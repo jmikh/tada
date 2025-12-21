@@ -304,7 +304,14 @@ export interface MouseUpEvent extends BaseEvent {
     y: number;
 }
 
-export type UserEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent;
+export interface HoverEvent extends BaseEvent {
+    type: 'hover';
+    x: number;
+    y: number;
+    endTime: number;
+}
+
+export type UserEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent | HoverEvent;
 
 export interface ZoomConfig {
     zoomIntensity: number; // Global zoom setting (e.g. 1.0)

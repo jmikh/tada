@@ -8,22 +8,24 @@ export * from './viewTransform.ts';
 // Core Abstractions
 // ============================================================================
 
-export interface HoverBlock {
-    startTime: number;
-    endTime: number;
-    centerX: number;
-    centerY: number;
-}
 
-export function findHoverBlocks(
+/**
+ * Analyzes a stream of UserEvents to detect periods where the mouse remains
+ * relatively stationary (within a bounding box) for a minimum duration.
+ * Returns these periods as synthetic 'HoverEvents'.
+ * 
+ * @param events List of user events (can be raw or mapped to timeline)
+ * @param inputSize Dimensions of the input view to determine hover bounding box size
+ */
+export function findHoverEvents(
     events: UserEvent[],
     inputSize: Size
-): HoverBlock[] {
+): UserEvent[] {
     // 1. Determine Box Size (10% of the bigger dimension)
     const boxSize = Math.max(inputSize.width, inputSize.height) * 0.1;
     const minDuration = 1000; // 1 second in ms
 
-    const blocks: HoverBlock[] = [];
+    const hoverEvents: UserEvent[] = [];
     let currentSegment: MouseEvent[] = [];
 
     // Helper to process a continuous segment of mouse events
@@ -37,6 +39,7 @@ export function findHoverBlocks(
             let maxY = segment[i].y;
 
             // Greedy expansion: find the longest sequence starting at i that fits in the box
+            // TODO: this ineffecient, might be find if we only calculate on clip changes.
             while (j < segment.length) {
                 const p = segment[j];
                 const newMinX = Math.min(minX, p.x);
@@ -69,12 +72,13 @@ export function findHoverBlocks(
                     const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
                     const centerY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
 
-                    blocks.push({
-                        startTime: startEvent.timestamp,
-                        endTime: endEvent.timestamp,
-                        centerX,
-                        centerY
-                    });
+                    hoverEvents.push({
+                        type: 'hover',
+                        timestamp: startEvent.timestamp,
+                        x: centerX,
+                        y: centerY,
+                        endTime: endEvent.timestamp
+                    } as UserEvent); // Cast needed if TS strictness issues with union, but actually fits HoverEvent
 
                     // Advance i to j to continue searching after this block
                     // (Try to fill "already created" implies we took the max possible, so we move on)
@@ -107,7 +111,7 @@ export function findHoverBlocks(
         processSegment(currentSegment);
     }
 
-    return blocks;
+    return hoverEvents;
 }
 
 export function calculateZoomSchedule(
@@ -118,14 +122,37 @@ export function calculateZoomSchedule(
 ): ViewportMotion[] {
     const motions: ViewportMotion[] = [];
 
-    // 1. Filter & Map Click Events to Output Time
+    // 1. Filter & Map Raw Events to Output Time (Applies Cuts & Latency)
     const mappedEvents = mapEventsToTimeline(events, clips);
 
     if (mappedEvents.length === 0) {
         return motions;
     }
 
-    // 2. Prepare for Zoom Level Calculation (Output Space)
+    // 2. Detect Hovers on the TIMELINE (Visual Hovers)
+    // We project the mapped events to a flat list using timeline time.
+    // This ensures we detect hovers that exist *after* editing (e.g. across cuts).
+    const timelineEvents: UserEvent[] = mappedEvents.map(m => ({
+        ...m.originalEvent,
+        timestamp: m.outputTime // Override with Timeline Time
+    }));
+
+    const hoverEvents = findHoverEvents(timelineEvents, viewTransform.inputVideoSize);
+
+    // 3. Inject Hovers back into mappedEvents
+    for (const hEvent of hoverEvents) {
+        if (hEvent.type !== 'hover') continue;
+
+        mappedEvents.push({
+            outputTime: hEvent.timestamp,
+            originalEvent: hEvent
+        });
+    }
+
+    // 4. Re-sort (since we added new events)
+    mappedEvents.sort((a, b) => a.outputTime - b.outputTime);
+
+    // 5. Prepare for Zoom Level Calculation (Output Space)
     // Zoom 1x = Full Output Size.
     // Zoom 2x = Half Output Size (centered).
     const zoomLevel = maxZoom;
@@ -140,7 +167,7 @@ export function calculateZoomSchedule(
     for (let i = 0; i < mappedEvents.length; i++) {
         const { outputTime, originalEvent: evt } = mappedEvents[i];
 
-        if (evt.type !== 'click') continue;
+        if (evt.type !== 'click' && evt.type !== 'hover') continue;
 
         // 1. Map Click to Output Space
         const clickOutput = viewTransform.inputToOutput({ x: evt.x, y: evt.y });
