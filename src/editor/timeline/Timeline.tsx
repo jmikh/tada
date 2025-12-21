@@ -56,6 +56,7 @@ export function Timeline() {
     const [draggingId, setDraggingId] = useState<string | null>(null);
     const [dragType, setDragType] = useState<'left' | 'right' | null>(null);
     const [dragStartX, setDragStartX] = useState(0);
+    const [dragStartTrackId, setDragStartTrackId] = useState<string | null>(null);
 
     // Snapshot of clip BEFORE drag starts, to calculate deltas correctly
     // We store the COPY of the clip to avoid reference issues.
@@ -99,17 +100,22 @@ export function Timeline() {
 
     // --- Dragging Logic for Trimming ---
     useEffect(() => {
-        if (!draggingId || !dragType || !initialClipState) return;
+        if (!draggingId || !dragType || !initialClipState || !dragStartTrackId) return;
 
         const handleGlobalMouseMove = (e: MouseEvent) => {
             const deltaX = e.clientX - dragStartX;
             const deltaMs = (deltaX / pixelsPerSec) * 1000;
             const clip = initialClipState;
 
-            // Find the track for this clip (expensive lookup but safe)
-            // const track = project.timeline.tracks.find(t => t.clips.some(c => c.id === clip.id));
-            const track = timeline.mainTrack;
-            if (!track.clips.some(c => c.id === clip.id)) return;
+            // Find the track for this clip using the saved trackId
+            let track = null;
+            if (dragStartTrackId === timeline.mainTrack.id) {
+                track = timeline.mainTrack;
+            } else if (timeline.overlayTrack && dragStartTrackId === timeline.overlayTrack.id) {
+                track = timeline.overlayTrack;
+            }
+
+            if (!track || !track.clips.some(c => c.id === clip.id)) return;
 
             let newClip = { ...clip };
 
@@ -165,6 +171,7 @@ export function Timeline() {
             setDraggingId(null);
             setDragType(null);
             setInitialClipState(null);
+            setDragStartTrackId(null);
         };
 
         window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -174,24 +181,32 @@ export function Timeline() {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [draggingId, dragType, dragStartX, initialClipState, pixelsPerSec, timeline, updateClip]);
+    }, [draggingId, dragType, dragStartX, dragStartTrackId, initialClipState, pixelsPerSec, timeline, updateClip]);
 
-    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right') => {
+    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right', trackId: string) => {
         e.preventDefault();
         e.stopPropagation();
 
-        // Find the clip object
+        // Find the clip object (Search in the specified track)
         let foundClip: Clip | null = null;
-        const mainTrack = timeline.mainTrack;
-        const c = mainTrack.clips.find(c => c.id === id);
-        if (c) {
-            foundClip = c;
+        let track = null;
+
+        if (trackId === timeline.mainTrack.id) {
+            track = timeline.mainTrack;
+        } else if (timeline.overlayTrack && trackId === timeline.overlayTrack.id) {
+            track = timeline.overlayTrack;
+        }
+
+        if (track) {
+            const c = track.clips.find(c => c.id === id);
+            if (c) foundClip = c;
         }
 
         if (foundClip) {
             setDraggingId(id);
             setDragType(type);
             setDragStartX(e.clientX);
+            setDragStartTrackId(trackId);
             setInitialClipState(foundClip);
         }
     };
@@ -269,7 +284,7 @@ export function Timeline() {
                                         clips={track.clips}
                                         pixelsPerSec={pixelsPerSec}
                                         trackHeight={TRACK_HEIGHT}
-                                        onDragStart={handleDragStart}
+                                        onDragStart={(e, id, type) => handleDragStart(e, id, type, track.id)}
                                     />
                                     {track.viewportMotions && track.viewportMotions.length > 0 && (
                                         <TimelineTrackViewportMotions
@@ -286,6 +301,18 @@ export function Timeline() {
                                 </div>
                             );
                         })()}
+
+                        {/* Render Overlay Track */}
+                        {timeline.overlayTrack && timeline.overlayTrack.visible && (
+                            <div key={timeline.overlayTrack.id} className="flex flex-col mt-4">
+                                <TimelineTrackVideo
+                                    clips={timeline.overlayTrack.clips}
+                                    pixelsPerSec={pixelsPerSec}
+                                    trackHeight={TRACK_HEIGHT}
+                                    onDragStart={(e, id, type) => handleDragStart(e, id, type, timeline.overlayTrack!.id)}
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* Hover Line */}

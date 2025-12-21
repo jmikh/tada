@@ -112,7 +112,7 @@ function Editor() {
                     track.mouseEffects = generateMouseEffects(source.events, source.durationMs);
                 }
 
-                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0);
+                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0, { linkGroupId: source.id });
                 const trackWithClip = TrackImpl.addClip(track, clip) as MainTrack;
 
                 const newTimeline = { ...proj.timeline, mainTrack: trackWithClip };
@@ -145,7 +145,9 @@ function Editor() {
 
                 // Create Clip
                 // Usually camera starts at 0.
-                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0);
+                // Link with Main Track (Screen)
+                const linkGroupId = screenSourceId;
+                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0, { linkGroupId });
                 const trackWithClip = TrackImpl.addClip(track, clip);
 
                 const newTimeline = { ...proj.timeline, overlayTrack: trackWithClip };
