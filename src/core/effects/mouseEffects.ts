@@ -1,86 +1,63 @@
-import type { UserEvent, MouseEffect, Clip } from '../types';
-import { mapEventsToTimeline } from './timeMapper.ts';
-// ============================================================================
-// GENERATION LOGIC
-// ============================================================================
+import type { UserEvent, ClickEvent, DragEvent } from '../types';
 
-const CLICK_DISPLAY_DURATION = 250; // ms
+export function generateRecordingEvents(
+    events: UserEvent[]
+): { clickEvents: ClickEvent[], dragEvents: DragEvent[] } {
+    const clickEvents: ClickEvent[] = [];
+    const dragEvents: DragEvent[] = [];
 
-export function generateMouseEffects(
-    events: UserEvent[],
-    clips: Clip[]
-): MouseEffect[] {
-    const effects: MouseEffect[] = [];
-    if (!events || events.length === 0) return effects;
+    if (!events || events.length === 0) return { clickEvents, dragEvents };
 
-    // 1. Filter & Map Events to Output Time
-    const mappedEvents = mapEventsToTimeline(events, clips);
+    // 1. Clicks are direct pass-through (assuming source events are already cleaned/typed)
+    // We explicitly cast or filter.
+    clickEvents.push(...events.filter(e => e.type === 'click') as ClickEvent[]);
 
-    // 2. Single Pass Processing on Mapped Events
-    let activeDrag: Partial<MouseEffect> | null = null;
+    // 2. Identify Drags (mousedown -> moves -> mouseup)
+    let activeDrag: Partial<DragEvent> | null = null;
 
-    for (const mapped of mappedEvents) {
-        const evt = mapped.originalEvent;
-        const time = mapped.outputTime;
+    // Events are assumed to be sorted by timestamp
+    // If not, we should sort them? Assuming sorted from source.
 
-        if (evt.type === 'click') {
-            effects.push({
-                id: crypto.randomUUID(),
-                type: 'click',
-                timeInMs: time,
-                timeOutMs: time + CLICK_DISPLAY_DURATION,
-                start: { x: evt.x, y: evt.y }
-            });
-        }
-        else if (evt.type === 'mousedown') {
+    for (const evt of events) {
+        if (evt.type === 'mousedown') {
             if (activeDrag) {
+                // Unexpected mousedown while dragging? Ignore or reset?
                 continue;
             }
-            // Start new drag
             activeDrag = {
-                id: crypto.randomUUID(),
+                timestamp: evt.timestamp,
                 type: 'drag',
-                timeInMs: time,
                 start: { x: evt.x, y: evt.y },
-                path: [{ timestamp: time, x: evt.x, y: evt.y }]
+                path: [{ timestamp: evt.timestamp, x: evt.x, y: evt.y }]
             };
-        }
-        else if (evt.type === 'mouse') {
-            // Mouse Move
-            if (activeDrag && activeDrag.path) {
-                activeDrag.path.push({ timestamp: time, x: evt.x, y: evt.y });
+        } else if (evt.type === 'mouse' && activeDrag) {
+            // Mouse move during drag
+            if (activeDrag.path) {
+                activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
             }
-        }
-        else if (evt.type === 'mouseup') {
-            // Drag End
-            if (activeDrag) {
-                activeDrag.timeOutMs = time;
-                activeDrag.end = { x: evt.x, y: evt.y };
-                if (activeDrag.path) {
-                    activeDrag.path.push({ timestamp: time, x: evt.x, y: evt.y });
-                }
-                effects.push(activeDrag as MouseEffect);
-                activeDrag = null;
+        } else if (evt.type === 'mouseup' && activeDrag) {
+            // End Drag
+            activeDrag.end = { x: evt.x, y: evt.y };
+            if (activeDrag.path) {
+                activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
             }
+            dragEvents.push(activeDrag as DragEvent);
+            activeDrag = null;
         }
     }
 
-    // 3. Close open drag
+    // Close any trailing drag
     if (activeDrag) {
-        // Use last event time or end of last clip?
-        // If we ran out of events, just close it at the last known time.
-        const lastTime = mappedEvents.length > 0 ? mappedEvents[mappedEvents.length - 1].outputTime : 0;
-        activeDrag.timeOutMs = lastTime;
         if (activeDrag.path && activeDrag.path.length > 0) {
             const last = activeDrag.path[activeDrag.path.length - 1];
             activeDrag.end = { x: last.x, y: last.y };
         } else {
             activeDrag.end = activeDrag.start;
         }
-        effects.push(activeDrag as MouseEffect);
+        dragEvents.push(activeDrag as DragEvent);
     }
 
-    return effects;
+    return { clickEvents, dragEvents };
 }
 
 

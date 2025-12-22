@@ -1,12 +1,8 @@
-import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
-// import { useProject } from '../../hooks/useProject'; // REMOVED
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useProjectStore, useProjectTimeline } from '../stores/useProjectStore';
 import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { TimelineRuler } from './TimelineRuler';
-import { TimelineTrackVideo } from './TimelineTrackVideo';
-import { TimelineTrackViewportMotions } from './TimelineTrackViewportMotions';
-import { TimelineTrackMouseEffects } from './TimelineTrackMouseEffects';
-import type { Clip } from '../../core/types';
+import type { OutputWindow } from '../../core/types';
 
 // Constants
 const MIN_PIXELS_PER_SEC = 10;
@@ -16,14 +12,10 @@ const TRACK_HEIGHT = 40;
 export function Timeline() {
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Legacy store for UI state (zoom/pixelsPerSec could move to store but keeping local for now if preferred)
-    // Actually using store for isPlaying/currentTime since App.tsx might still drive it separately?
-    // Plan said "Subsribe to useProject".
-    // useProject has currentTimeMs and isPlaying.
     // -- Stores --
     const timeline = useProjectTimeline();
-    const splitAt = useProjectStore(s => s.splitAt);
-    const updateClip = useProjectStore(s => s.updateClip);
+    const updateOutputWindow = useProjectStore(s => s.updateOutputWindow);
+    const addOutputWindow = useProjectStore(s => s.addOutputWindow);
 
     const isPlaying = usePlaybackStore(s => s.isPlaying);
     const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
@@ -33,19 +25,7 @@ export function Timeline() {
     // Zoom Level (Timeline Scale)
     const [pixelsPerSec, setPixelsPerSec] = useState(100);
 
-    // TODO: Calculate total duration dynamically or from project
-    // Project duration might not be updated automatically by core yet?
-    // Let's calculate max end time of all clips.
-    const totalDuration = useMemo(() => {
-        let max = 10000; // Default min duration
-        const t = timeline.mainTrack;
-        t.clips.forEach(c => {
-            const end = userClipEnd(c);
-            if (end > max) max = end;
-        });
-        return max;
-    }, [timeline]);
-
+    const totalDuration = timeline.durationMs || 10000;
     const totalWidth = (totalDuration / 1000) * pixelsPerSec;
 
     // Interaction State
@@ -54,16 +34,14 @@ export function Timeline() {
 
     // Dragging State
     interface DragState {
-        clipId: string;
-        trackId: string;
-        type: 'left' | 'right';
+        windowId: string;
+        type: 'left' | 'right' | 'move';
         startX: number;
-        initialClip: Clip;
-        currentClip: Clip; // The modified clip (visual state)
+        initialWindow: OutputWindow;
+        currentWindow: OutputWindow; // The modified window (visual state)
         constraints: {
-            minTimelineIn: number;
-            maxTimelineIn: number;
-            maxSourceDuration: number;
+            minStart: number;
+            maxEnd: number;
         };
     }
 
@@ -74,7 +52,6 @@ export function Timeline() {
     const getTimeFromEvent = (e: React.MouseEvent | MouseEvent) => {
         if (!containerRef.current) return 0;
         const rect = containerRef.current.getBoundingClientRect();
-        // Determine scroll offset safely
         const scrollLeft = containerRef.current.scrollLeft || 0;
         const x = e.clientX - rect.left + scrollLeft;
         const time = (x / pixelsPerSec) * 1000;
@@ -105,69 +82,69 @@ export function Timeline() {
         setIsCTIScrubbing(false);
     };
 
-    // --- Dragging Logic for Trimming ---
+    // --- Split Action ---
+    const handleSplit = () => {
+        // Find active window at currentTimeMs
+        const activeWinIndex = timeline.outputWindows.findIndex(w => currentTimeMs > w.startMs && currentTimeMs < w.endMs);
+        if (activeWinIndex === -1) return;
+
+        const win = timeline.outputWindows[activeWinIndex];
+
+        // 1. Shrink current window to end at split point
+        updateOutputWindow(win.id, { endMs: currentTimeMs });
+
+        // 2. Create new window starting at split point
+        // NOTE: We need a way to generate IDs safely. Using randomUUID for now.
+        const newWindow: OutputWindow = {
+            id: crypto.randomUUID(),
+            startMs: currentTimeMs,
+            endMs: win.endMs
+        };
+        addOutputWindow(newWindow);
+    };
+
+    // --- Dragging Logic for Operating Windows ---
     useEffect(() => {
         if (!dragState) return;
 
         const handleGlobalMouseMove = (e: MouseEvent) => {
             const deltaX = e.clientX - dragState.startX;
             const deltaMs = (deltaX / pixelsPerSec) * 1000;
-            const clip = dragState.initialClip;
-            const { minTimelineIn, maxTimelineIn } = dragState.constraints;
+            const win = dragState.initialWindow;
+            const { minStart, maxEnd } = dragState.constraints;
 
-            let newClip = { ...clip };
+            let newWindow = { ...win };
 
             if (dragState.type === 'left') {
-                // Moving Start
-                const proposedTimelineIn = clip.timelineInMs + deltaMs;
+                const proposedStart = win.startMs + deltaMs;
+                // Cannot go before minStart, cannot cross endMs (min dur 100ms)
+                newWindow.startMs = Math.min(Math.max(proposedStart, minStart), win.endMs - 100);
+            } else if (dragState.type === 'right') {
+                const proposedEnd = win.endMs + deltaMs;
+                // Cannot go past maxEnd, cannot cross startMs
+                newWindow.endMs = Math.max(Math.min(proposedEnd, maxEnd), win.startMs + 100);
+            } else if (dragState.type === 'move') {
+                const duration = win.endMs - win.startMs;
+                const proposedStart = win.startMs + deltaMs;
 
-                // CLAMP 1: Boundary check
-                const clampedTimelineIn = Math.min(Math.max(proposedTimelineIn, minTimelineIn), maxTimelineIn);
+                let safeStart = Math.max(proposedStart, minStart);
+                let safeEnd = safeStart + duration;
 
-                // Calculate valid delta based on clamped value
-                const finalTimelineDelta = clampedTimelineIn - clip.timelineInMs;
-                const sourceDelta = finalTimelineDelta * clip.speed;
-
-                const proposedSourceIn = clip.sourceInMs + sourceDelta;
-
-                // CLAMP 2: Source Content check
-                if (proposedSourceIn >= clip.sourceOutMs) return;
-
-                newClip.timelineInMs = clampedTimelineIn;
-                newClip.sourceInMs = proposedSourceIn;
-
-            } else {
-                // Moving End
-                const sourceDelta = deltaMs * clip.speed;
-                const proposedSourceOut = clip.sourceOutMs + sourceDelta;
-
-                const proposedTimelineDuration = (proposedSourceOut - clip.sourceInMs) / clip.speed;
-                const proposedTimelineOut = clip.timelineInMs + proposedTimelineDuration;
-
-                let validSourceOut = proposedSourceOut;
-
-                // Check Max Timeline Boundary
-                if (proposedTimelineOut > dragState.constraints.maxTimelineIn) {
-                    const maxDurationMs = dragState.constraints.maxTimelineIn - clip.timelineInMs;
-                    validSourceOut = clip.sourceInMs + (maxDurationMs * clip.speed);
+                if (safeEnd > maxEnd) {
+                    safeEnd = maxEnd;
+                    safeStart = safeEnd - duration;
                 }
 
-                // Check Min Duration
-                if (validSourceOut <= clip.sourceInMs) {
-                    validSourceOut = clip.sourceInMs + 100; // Min 100ms
-                }
-
-                newClip.sourceOutMs = validSourceOut;
+                newWindow.startMs = safeStart;
+                newWindow.endMs = safeEnd;
             }
 
-            // UPDATE LOCAL STATE, NOT STORE
-            setDragState(prev => prev ? { ...prev, currentClip: newClip } : null);
+            setDragState(prev => prev ? { ...prev, currentWindow: newWindow } : null);
         };
 
         const handleGlobalMouseUp = () => {
-            // COMMIT TO STORE
             if (dragState) {
-                updateClip(dragState.trackId, dragState.currentClip);
+                updateOutputWindow(dragState.windowId, dragState.currentWindow);
             }
             setDragState(null);
         };
@@ -179,60 +156,34 @@ export function Timeline() {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [dragState, pixelsPerSec, updateClip]);
+    }, [dragState, pixelsPerSec, updateOutputWindow]);
 
-    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right', trackId: string) => {
+    const handleDragStart = (e: React.MouseEvent, id: string, type: 'left' | 'right' | 'move') => {
         e.preventDefault();
         e.stopPropagation();
 
-        // Find the clip object (Search in the specified track)
-        let track = null;
-        if (trackId === timeline.mainTrack.id) {
-            track = timeline.mainTrack;
-        } else if (timeline.overlayTrack && trackId === timeline.overlayTrack.id) {
-            track = timeline.overlayTrack;
+        const winIndex = timeline.outputWindows.findIndex(w => w.id === id);
+        if (winIndex === -1) return;
+        const win = timeline.outputWindows[winIndex];
+
+        // Strict Neighbor Constraints (No Overlap)
+        let minStart = 0;
+        let maxEnd = totalDuration;
+
+        if (winIndex > 0) {
+            minStart = timeline.outputWindows[winIndex - 1].endMs;
         }
-
-        if (!track) return;
-
-        const clipIndex = track.clips.findIndex(c => c.id === id);
-        if (clipIndex === -1) return;
-
-        const clip = track.clips[clipIndex];
-
-        // --- Calculate Constraints ---
-        let minTimelineIn = 0;
-        let maxTimelineIn = Infinity;
-
-        if (type === 'left') {
-            // LEFT Handle: 
-            if (clipIndex > 0) {
-                const prevClip = track.clips[clipIndex - 1];
-                minTimelineIn = prevClip.timelineInMs + (prevClip.sourceOutMs - prevClip.sourceInMs) / prevClip.speed;
-            }
-            // Max is constrained by current End
-            const timelineOut = clip.timelineInMs + (clip.sourceOutMs - clip.sourceInMs) / clip.speed;
-            maxTimelineIn = timelineOut - 100;
-        } else {
-            // RIGHT Handle:
-            if (clipIndex < track.clips.length - 1) {
-                const nextClip = track.clips[clipIndex + 1];
-                maxTimelineIn = nextClip.timelineInMs;
-            }
+        if (winIndex < timeline.outputWindows.length - 1) {
+            maxEnd = timeline.outputWindows[winIndex + 1].startMs;
         }
 
         setDragState({
-            clipId: id,
-            trackId,
+            windowId: id,
             type,
             startX: e.clientX,
-            initialClip: clip,
-            currentClip: clip,
-            constraints: {
-                minTimelineIn,
-                maxTimelineIn,
-                maxSourceDuration: Infinity // TODO
-            }
+            initialWindow: win,
+            currentWindow: win,
+            constraints: { minStart, maxEnd }
         });
     };
 
@@ -245,20 +196,23 @@ export function Timeline() {
         return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}.${dec}`;
     };
 
-    // const videoTracks = project.timeline.tracks.filter(t => t.type === 'video'); // REMOVED
+    // --- Derived Data for Source Rows ---
+    const recording = timeline.recording;
+    const timelineOffset = recording.timelineOffsetMs;
 
     return (
         <div className="flex flex-col h-full bg-[#1e1e1e] select-none text-white font-sans">
             {/* 1. Toolbar */}
-            <div className="h-10 flex items-center px-2 bg-[#252526] border-b border-[#333] shrink-0 justify-between">
+            <div className="h-10 flex items-center px-4 bg-[#252526] border-b border-[#333] shrink-0 justify-between">
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={() => splitAt(currentTimeMs)}
-                        className="flex items-center gap-1 px-3 py-1 bg-[#333] hover:bg-[#444] rounded text-xs font-medium transition-colors"
+                        onClick={handleSplit}
+                        className="px-3 py-1 bg-[#333] hover:bg-[#444] rounded text-xs border border-[#555]"
+                        title="Split at Playhead"
                     >
-                        ✂️ Split
+                        Split
                     </button>
-                    <div className="w-[1px] h-4 bg-[#444] mx-2"></div>
+                    {/* Future: Delete button */}
                 </div>
 
                 <div className="flex items-center gap-4 bg-[#111] px-4 py-1 rounded-full border border-[#333]">
@@ -298,42 +252,116 @@ export function Timeline() {
                     <TimelineRuler totalWidth={totalWidth} pixelsPerSec={pixelsPerSec} />
 
                     {/* Tracks Container */}
-                    <div className="py-2 flex flex-col gap-1">
+                    <div className="py-2 flex flex-col gap-2 relative pl-0">
 
-                        {/* Render Main Video Track */}
-                        {(() => {
-                            const track = timeline.mainTrack;
-                            // Optimistic Update: Replace dragged clip in the list
-                            const displayClips = track.clips.map(c =>
-                                (dragState && dragState.trackId === track.id && dragState.clipId === c.id)
-                                    ? dragState.currentClip
-                                    : c
-                            );
+                        {/* ROW 1: Output Windows */}
+                        <div className="w-full relative bg-[#2a2a2a]/50" style={{ height: TRACK_HEIGHT }}>
+                            <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">OUTPUT</div>
+                            {timeline.outputWindows.map(w => {
+                                const win = (dragState && dragState.windowId === w.id) ? dragState.currentWindow : w;
+                                const left = (win.startMs / 1000) * pixelsPerSec;
+                                const width = ((win.endMs - win.startMs) / 1000) * pixelsPerSec;
 
-                            return (
-                                <div key={track.id} className="flex flex-col">
-                                    <TimelineTrackVideo
-                                        clips={displayClips}
-                                        pixelsPerSec={pixelsPerSec}
-                                        trackHeight={TRACK_HEIGHT}
-                                        onDragStart={(e, id, type) => handleDragStart(e, id, type, track.id)}
+                                return (
+                                    <div
+                                        key={w.id}
+                                        className="absolute top-0 bottom-0 bg-green-600/90 border border-green-400/50 rounded-sm overflow-hidden group hover:brightness-110 transition-colors cursor-pointer box-border"
+                                        style={{ left: `${left}px`, width: `${width}px` }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onMouseDown={(e) => handleDragStart(e, w.id, 'move')}
+                                    >
+                                        <div className="px-1 text-[10px] text-white/90 truncate pointer-events-none mt-1">
+                                            Main
+                                        </div>
+                                        {/* Resize Handles */}
+                                        <div className="absolute top-0 bottom-0 left-0 w-2 cursor-ew-resize hover:bg-white/30 z-20"
+                                            onMouseDown={(e) => handleDragStart(e, w.id, 'left')} />
+                                        <div className="absolute top-0 bottom-0 right-0 w-2 cursor-ew-resize hover:bg-white/30 z-20"
+                                            onMouseDown={(e) => handleDragStart(e, w.id, 'right')} />
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* ROW 2: Screen Source Video */}
+                        <div className="w-full relative bg-[#252526]" style={{ height: TRACK_HEIGHT }}>
+                            <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">SOURCE</div>
+                            {/* Represents the full recording source, shifted by offset */}
+                            <div
+                                className="absolute top-1 bottom-1 bg-blue-900/40 border border-blue-500/30 rounded-sm"
+                                style={{
+                                    left: `${(timelineOffset / 1000) * pixelsPerSec}px`,
+                                    // Make it span effectively infinite or reasonable max for visualization
+                                    width: `${(totalDuration / 1000) * pixelsPerSec}px`
+                                }}
+                            >
+                                <div className="px-2 text-[10px] text-blue-300/50">Screen Recording</div>
+                            </div>
+                        </div>
+
+                        {/* ROW 3: Viewport Motions */}
+                        <div className="w-full relative bg-[#252526]" style={{ height: TRACK_HEIGHT }}>
+                            <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">MOTION</div>
+                            {recording.viewportMotions?.map((m, i) => {
+                                // Motion times are Source Time. Must add Offset to get Timeline Time.
+                                const startMs = (m.endTimeMs - m.durationMs) + timelineOffset;
+                                const endMs = m.endTimeMs + timelineOffset;
+
+                                const left = (startMs / 1000) * pixelsPerSec;
+                                const width = ((endMs - startMs) / 1000) * pixelsPerSec;
+
+                                if (endMs < 0) return null;
+
+                                return (
+                                    <div
+                                        key={i}
+                                        className="absolute top-1 bottom-1 bg-purple-900/60 border border-purple-500/50 rounded-sm"
+                                        style={{ left: `${left}px`, width: `${Math.max(width, 2)}px` }}
+                                    >
+                                        <div className="text-[9px] text-purple-200/50 px-1 truncate">Zoom</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* ROW 4: Events (Clicks/Drags) */}
+                        <div className="w-full relative bg-[#252526]" style={{ height: TRACK_HEIGHT }}>
+                            <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">EVENTS</div>
+
+                            {/* Clicks */}
+                            {recording.clickEvents?.map((c, i) => {
+                                const timeMs = c.timestamp + timelineOffset;
+                                const left = (timeMs / 1000) * pixelsPerSec;
+                                return (
+                                    <div
+                                        key={`c-${i}`}
+                                        className="absolute top-3 w-2 h-2 rounded-full bg-yellow-500 hover:scale-125 transition-transform"
+                                        style={{ left: `${left}px` }}
+                                        title={`Click at ${formatFullTime(timeMs)}`}
                                     />
-                                    {track.viewportMotions && track.viewportMotions.length > 0 && (
-                                        <TimelineTrackViewportMotions
-                                            motions={track.viewportMotions}
-                                            pixelsPerSec={pixelsPerSec}
-                                        />
-                                    )}
-                                    {track.mouseEffects && track.mouseEffects.length > 0 && (
-                                        <TimelineTrackMouseEffects
-                                            effects={track.mouseEffects}
-                                            pixelsPerSec={pixelsPerSec}
-                                        />
-                                    )}
-                                </div>
-                            );
-                        })()}
+                                );
+                            })}
 
+                            {/* Drags */}
+                            {recording.dragEvents?.map((d, i) => {
+                                // Assuming drag starts at d.timestamp and ends at last path point
+                                const startMs = d.timestamp + timelineOffset;
+                                const endMs = (d.path && d.path.length > 0)
+                                    ? d.path[d.path.length - 1].timestamp + timelineOffset
+                                    : startMs + 500; // fallback duration
+
+                                const left = (startMs / 1000) * pixelsPerSec;
+                                const width = ((endMs - startMs) / 1000) * pixelsPerSec;
+
+                                return (
+                                    <div
+                                        key={`d-${i}`}
+                                        className="absolute top-4 h-1 bg-yellow-600/60 rounded-full"
+                                        style={{ left: `${left}px`, width: `${width}px` }}
+                                    />
+                                );
+                            })}
+                        </div>
 
                     </div>
 
@@ -356,9 +384,4 @@ export function Timeline() {
             </div>
         </div>
     );
-}
-
-// Helper
-function userClipEnd(c: Clip) {
-    return c.timelineInMs + (c.sourceOutMs - c.sourceInMs) / c.speed;
 }

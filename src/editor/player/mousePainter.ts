@@ -1,63 +1,73 @@
-import type { MouseEffect, Point, Rect, TimestampedPoint } from '../../core/types';
+import type { Point, Rect, TimestampedPoint, Recording } from '../../core/types';
 import type { ViewTransform } from '../../core/effects/viewTransform';
 
 /**
  * Draws simpler "circle" mouse effects for the editor.
  *
  * @param ctx 2D Canvas Context
- * @param effects List of mouse effects to draw
- * @param currentTimeMs Current playback time
- * @param cameraWindow Current Camera Window (Output Space)
+ * @param recording Recording containing events
+ * @param sourceTimeMs Current Source Time
+ * @param viewport Current Viewport (Output Space)
  * @param config Transformation Config
  */
 export function drawMouseEffects(
     ctx: CanvasRenderingContext2D,
-    effects: MouseEffect[],
-    currentTimeMs: number,
-    viewport: Rect, // Current Viewport (Output Space)
-    config: ViewTransform // Transformation Config
+    recording: Recording,
+    sourceTimeMs: number,
+    viewport: Rect,
+    config: ViewTransform
 ) {
-    // Draw Clicks
-    // Draw active Drags
+    const { clickEvents, dragEvents } = recording;
 
-    const activeEffects = effects.filter(e => currentTimeMs >= e.timeInMs && currentTimeMs <= e.timeOutMs);
+    // 1. Draw Clicks
+    // Show clicks that happened recently (e.g. within last 500ms)
+    const CLICK_DURATION = 500;
 
-    for (const effect of activeEffects) {
-        if (effect.type === 'click') {
-            const elapsed = currentTimeMs - effect.timeInMs;
-            const duration = effect.timeOutMs - effect.timeInMs;
-            const progress = Math.min(1, Math.max(0, elapsed / duration));
+    // Optimisation: We could binary search if sorted, but linear fits for small event counts
+    for (const click of clickEvents) {
+        if (sourceTimeMs >= click.timestamp && sourceTimeMs <= click.timestamp + CLICK_DURATION) {
+            const elapsed = sourceTimeMs - click.timestamp;
+            const progress = elapsed / CLICK_DURATION;
 
             // Project Center (Input -> Screen)
-            const center = config.projectToScreen(effect.start, viewport);
+            const center = config.projectToScreen(click, viewport);
 
             // Draw Expanding Gray Circle
             const maxRadius = 60; // px
             const currentRadius = maxRadius * progress;
-            const opacity = 0.5 * (1 - progress); // Start at 0.5 opacity and fade out
+            const opacity = 0.5 * (1 - progress);
 
             ctx.beginPath();
             ctx.arc(center.x, center.y, currentRadius, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(128, 128, 128, ${opacity})`;
             ctx.fill();
         }
-        else if (effect.type === 'drag') {
+    }
+
+    // 2. Draw Drags
+    // Show active drag if sourceTimeMs is within drag duration
+    // DragEvent doesn't strictly have duration on the root object unless we calculate it from path?
+    // The previous DragEvent had start/end timestamps. 
+    // New DragEvent extends BaseEvent (timestamp). It has path? path has timestamps.
+    // Let's assume drag starts at event.timestamp and ends at last point timestamp.
+
+    for (const drag of dragEvents) {
+        if (!drag.path || drag.path.length === 0) continue;
+
+        const endTimestamp = drag.path[drag.path.length - 1].timestamp;
+
+        if (sourceTimeMs >= drag.timestamp && sourceTimeMs <= endTimestamp) {
             // Find current position along path
-            if (effect.path && effect.path.length > 0) {
-                // Find point in path closest to current time (or interpolated)
-                const currentPoint = getPointAtTime(effect.path, currentTimeMs);
+            const currentPoint = getPointAtTime(drag.path, sourceTimeMs);
 
-                // Project
-                const screenPoint = config.projectToScreen(currentPoint, viewport);
+            // Project
+            const screenPoint = config.projectToScreen(currentPoint, viewport);
 
-                // Draw Cursor Representative (Gray Circle, same as click max)
-                ctx.beginPath();
-                ctx.arc(screenPoint.x, screenPoint.y, 60, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(128, 128, 128, 0.5)';
-                ctx.fill();
-
-                // Optional: Draw Trail?
-            }
+            // Draw Cursor Representative
+            ctx.beginPath();
+            ctx.arc(screenPoint.x, screenPoint.y, 60, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(128, 128, 128, 0.5)';
+            ctx.fill();
         }
     }
 }

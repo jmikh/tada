@@ -1,7 +1,6 @@
 
-import type { Project, ID, TimeMs, Source, Track } from '../types';
+import type { Project, ID, TimeMs, Source, Recording } from '../types';
 import { TimelineImpl } from '../timeline/Timeline';
-import { TrackImpl } from '../timeline/Track';
 
 /**
  * Represents the resolved state of the timeline at a specific point in time.
@@ -9,20 +8,18 @@ import { TrackImpl } from '../timeline/Track';
  */
 export interface RenderState {
     timeMs: TimeMs;
-    /** List of tracks to render, possibly containing a resolved clip frame */
-    tracks: {
-        trackId: ID;
-        visible: boolean;
-        clip?: {
-            id: ID;
-            source: Source;
-            /** The specific timestamp within the source media to render */
-            sourceTimeMs: TimeMs;
-            speed: number;
-            volume: number;
-            muted: boolean;
-        };
-    }[];
+    /** Whether the current time falls within an output window */
+    isActive: boolean;
+
+    /** The calculated source time */
+    sourceTimeMs: TimeMs;
+
+    /** The recording to render */
+    recording: Recording;
+
+    /** Resolved Source objects */
+    screenSource?: Source;
+    cameraSource?: Source; // Future proofing
 }
 
 /**
@@ -33,13 +30,14 @@ export class ProjectImpl {
      * Initializes a new Project with default structure.
      */
     static create(name: string = "New Project"): Project {
+        // Need a placeholder source ID or empty
         return {
             id: crypto.randomUUID(),
             name,
             createdAt: new Date(),
             updatedAt: new Date(),
             sources: {},
-            timeline: TimelineImpl.create(),
+            timeline: TimelineImpl.create(''),
             outputSettings: {
                 size: { width: 3840, height: 2160 },
                 frameRate: 30
@@ -85,64 +83,33 @@ export class ProjectImpl {
 
     /**
      * Resolves what should be rendered at a specific timeline time.
-     * Iterates all visible tracks and calculates the exact Source Time for any active clips.
-     * 
-     * @param project - The project state
-     * @param timeMs - The current playhead time
-     * @returns A RenderState object suitable for the UI/Canvas to draw.
      */
     static getRenderState(project: Project, timeMs: TimeMs): RenderState {
-        const result: RenderState = {
+        const { timeline, sources } = project;
+        const { recording, outputWindows } = timeline;
+
+        // 1. Check if time is in any output window
+        // Windows are ordered and non-overlapping.
+        // We can optimize search, but linear is fine for now.
+        const activeWindow = outputWindows.find(w => timeMs >= w.startMs && timeMs < w.endMs);
+        const isActive = !!activeWindow;
+
+        // 2. Calculate Source Time
+        // Source Time = Timeline Time - Recording Offset (Source 0 is at offset)
+        // Note: This calculates source time even if not in window, which is useful for "preview" or scrubbing blank space.
+        const sourceTimeMs = timeMs - recording.timelineOffsetMs;
+
+        // 3. Resolve Sources
+        const screenSource = sources[recording.screenSourceId];
+        const cameraSource = recording.cameraSourceId ? sources[recording.cameraSourceId] : undefined;
+
+        return {
             timeMs,
-            tracks: []
+            isActive,
+            sourceTimeMs,
+            recording,
+            screenSource,
+            cameraSource
         };
-
-        const tracksToCheck: Track[] = [project.timeline.mainTrack];
-        if (project.timeline.overlayTrack) tracksToCheck.push(project.timeline.overlayTrack);
-
-        for (const track of tracksToCheck) {
-            // Processing logic:
-            // Valid if: Clip exists at time. 
-            // Visibility: handled by caller (PlayerCanvas) using 'visible' flag.
-            // Audio: handled by caller using 'muted'/'volume' flags on clip.
-
-            // Find clip at time
-            const clip = TrackImpl.findClipAtTime(track, timeMs);
-
-            if (clip) {
-                const source = project.sources[clip.sourceId];
-                if (source) {
-                    // Calculate Source Time
-                    const offset = (timeMs - clip.timelineInMs) * clip.speed;
-                    const sourceTimeMs = clip.sourceInMs + offset;
-
-                    // Calculate effective mute/volume
-                    // Track mute overrides clip mute (or combines?)
-                    // Usually Track Mute = silence whole track.
-                    const isMuted = track.muted || clip.audioMuted;
-
-                    result.tracks.push({
-                        trackId: track.id,
-                        visible: track.visible,
-                        clip: {
-                            id: clip.id,
-                            source,
-                            sourceTimeMs,
-                            speed: clip.speed,
-                            volume: clip.audioVolume,
-                            muted: isMuted
-                        }
-                    });
-                }
-            } else {
-                // Return track info even if empty (optional, but good for consistency)
-                result.tracks.push({
-                    trackId: track.id,
-                    visible: track.visible
-                });
-            }
-        }
-
-        return result;
     }
 }

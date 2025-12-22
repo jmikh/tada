@@ -1,5 +1,4 @@
 import { useRef, useEffect } from 'react';
-// import { useEditorStore } from '../store'; // Unused now
 import { ViewTransform } from '../../core/effects/viewTransform';
 import { getViewportStateAtTime } from '../../core/effects/viewportMotion';
 import { drawMouseEffects } from './mousePainter';
@@ -10,13 +9,9 @@ import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { ProjectImpl } from '../../core/project/Project';
 
 
-
 export const PlayerCanvas = () => {
     const project = useProjectData();
     const updateSource = useProjectStore(s => s.updateSource);
-
-    // Playback State (Observed directly in loop)
-    // const { isPlaying } = usePlaybackStore();
 
     // Derived State
     const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
@@ -43,19 +38,39 @@ export const PlayerCanvas = () => {
                 const safeDelta = Math.min(delta, 100);
 
                 if (safeDelta > 0) {
-                    const newTime = pbState.currentTimeMs + safeDelta;
-                    pbState.setCurrentTime(newTime);
+                    let nextTime = pbState.currentTimeMs + safeDelta;
+
+                    // GAP SKIPPING LOGIC
+                    const project = useProjectStore.getState().project;
+                    const windows = project.timeline.outputWindows; // Assumed sorted
+
+                    // Check if inside any window
+                    // TODO [Optimization]: could keep track of current window index, but linear scan is fine for small N
+                    const activeWindow = windows.find(w => nextTime >= w.startMs && nextTime < w.endMs);
+
+                    if (!activeWindow) {
+                        // We are in a gap or at the end
+                        const nextWin = windows.find(w => w.startMs > nextTime);
+                        if (nextWin) {
+                            // Jump to next window
+                            nextTime = nextWin.startMs;
+                        } else {
+                            // End of timeline
+                            pbState.setIsPlaying(false);
+                            // Clamp to end
+                            const lastWin = windows[windows.length - 1];
+                            nextTime = lastWin ? lastWin.endMs : 0;
+                        }
+                    }
+
+                    pbState.setCurrentTime(nextTime);
                 }
                 lastTimeRef.current = time;
             } else {
                 lastTimeRef.current = 0;
             }
 
-            // Always render pipeline to ensure UI reflects state (scrubbing, seeking, resizing)
-            // Even if paused, we might need to redraw if something changed elsewhere.
-            // Optimization: Could check if state changed, but for now 60fps draw is fine for an editor.
             renderPipeline();
-
             animationFrameRef.current = requestAnimationFrame(tick);
         };
 
@@ -63,7 +78,7 @@ export const PlayerCanvas = () => {
         return () => cancelAnimationFrame(animationFrameRef.current);
     }, []);
 
-    // Render Pipeline (Ref-stable or accessed via loose closure - 'renderPipeline' uses getState inside)
+    // Render Pipeline
     const renderPipeline = () => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
@@ -74,7 +89,6 @@ export const PlayerCanvas = () => {
 
         const project = state.project;
         const currentTimeMs = playback.currentTimeMs;
-        const paddingPercentage = project.timeline.mainTrack?.displaySettings?.padding || 0;
         const outputSize = project.outputSettings.size;
 
         // Clear
@@ -89,82 +103,98 @@ export const PlayerCanvas = () => {
             renderState = ProjectImpl.getRenderState(project, currentTimeMs);
         } catch { return; }
 
-        // Iterate all tracks in order (Main first, then Overlay)
-        for (const trackItem of renderState.tracks) {
-            if (!trackItem.clip) continue;
+        if (!renderState.isActive || !renderState.screenSource) {
+            // Not in an output window or no source, showing background only
+            return;
+        }
 
-            const clip = trackItem.clip;
-            const sourceId = clip.source.id;
-            const video = internalVideoRefs.current[sourceId];
-            const isMainTrack = trackItem.trackId === project.timeline.mainTrack.id;
+        const source = renderState.screenSource;
+        const sourceId = source.id;
+        const video = internalVideoRefs.current[sourceId];
+        const recording = renderState.recording;
 
-            if (video) {
-                // A. Sync Video Time & Audio
-                const desiredTimeS = clip.sourceTimeMs / 1000;
+        const paddingPercentage = 0;
 
-                // Read processed clip properties from RenderState
-                const speed = clip.speed ?? 1;
-                const volume = clip.volume ?? 1;
-                const muted = clip.muted ?? false;
+        if (video) {
+            // A. Sync Video Time
+            const desiredTimeS = renderState.sourceTimeMs / 1000;
 
-                if (playback.isPlaying) {
-                    if (video.paused) video.play().catch(() => { });
-                    if (Math.abs(video.playbackRate - speed) > 0.01) video.playbackRate = speed;
-                    if (Math.abs(video.currentTime - desiredTimeS) > 0.2) video.currentTime = desiredTimeS;
-                } else {
-                    if (!video.paused) video.pause();
-                    if (Math.abs(video.currentTime - desiredTimeS) > 0.001) video.currentTime = desiredTimeS;
+            // Allow playing past duration? Source logic usually clamps, but let's trust sourceTimeMs for now or clamp.
+            // HTMLVideoElement loops if loop is true, but here we control it.
+
+            if (playback.isPlaying) {
+                if (video.paused) video.play().catch(() => { });
+                // We assume 1x speed for now as 'speed' was on Clip.
+                // If we want variable speed, we need it in Recording or OutputWindow?
+                // For now 1x.
+                if (Math.abs(video.currentTime - desiredTimeS) > 0.2) video.currentTime = desiredTimeS;
+            } else {
+                if (!video.paused) video.pause();
+                if (Math.abs(video.currentTime - desiredTimeS) > 0.001) video.currentTime = desiredTimeS;
+            }
+
+            // B. Draw
+            const inputSize = video.videoWidth && video.videoHeight
+                ? { width: video.videoWidth, height: video.videoHeight }
+                : source.size;
+
+            if (inputSize) {
+                // Viewport Motion (Source Space calculation)
+                const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
+                const viewportMotions = recording.viewportMotions || [];
+
+                // getViewportStateAtTime expects sourceTimeMs now
+                const effectiveViewport = getViewportStateAtTime(viewportMotions, renderState.sourceTimeMs, outputSize);
+
+                const renderRects = config.resolveRenderRects(effectiveViewport);
+
+                if (renderRects) {
+                    ctx.drawImage(
+                        video,
+                        renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
+                        renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
+                    );
                 }
 
-                // Sync Audio Props
-                if (video.volume !== volume) video.volume = volume;
-                if (video.muted !== muted) video.muted = muted;
-
-                // B. Draw (Only if visible)
-                if (trackItem.visible) {
-                    const inputSize = video.videoWidth && video.videoHeight
-                        ? { width: video.videoWidth, height: video.videoHeight }
-                        : clip.source.size;
-
-                    if (!inputSize) continue;
-
-                    if (isMainTrack) {
-                        // MAIN TRACK RENDERING (Viewport Motion)
-                        const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
-                        const track = project.timeline.mainTrack;
-                        const viewportMotions = track?.viewportMotions || [];
-                        const effectiveViewport = getViewportStateAtTime(viewportMotions, currentTimeMs, outputSize); // Use global zoom logic
-
-                        const renderRects = config.resolveRenderRects(effectiveViewport);
-
-                        if (renderRects) {
-                            ctx.drawImage(
-                                video,
-                                renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
-                                renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
-                            );
-                        }
-
-                        if (track.mouseEffects) {
-                            drawMouseEffects(ctx, track.mouseEffects, currentTimeMs, effectiveViewport, config);
-                        }
-                    } else {
-                        // OVERLAY TRACK RENDERING (PIP)
-                        drawWebcam(ctx, video, outputSize, inputSize);
-                    }
+                // Mouse Effects
+                if (recording.clickEvents || recording.dragEvents) {
+                    drawMouseEffects(ctx, recording, renderState.sourceTimeMs, effectiveViewport, config);
                 }
             }
         }
+
+        // Draw Webcam (PIP)
+        if (renderState.cameraSource && internalVideoRefs.current[renderState.cameraSource.id]) {
+            const camVideo = internalVideoRefs.current[renderState.cameraSource.id];
+            const camSource = renderState.cameraSource;
+            // Sync Camera video
+            // Assumption: Camera is always in sync with Screen Source (recorded together)
+            // So we use the same sourceTimeMs.
+            const desiredTimeS = renderState.sourceTimeMs / 1000;
+            if (playback.isPlaying) {
+                if (camVideo.paused) camVideo.play().catch(() => { });
+                if (Math.abs(camVideo.currentTime - desiredTimeS) > 0.2) camVideo.currentTime = desiredTimeS;
+            } else {
+                if (!camVideo.paused) camVideo.pause();
+                if (Math.abs(camVideo.currentTime - desiredTimeS) > 0.001) camVideo.currentTime = desiredTimeS;
+            }
+
+            const inputSize = camVideo.videoWidth && camVideo.videoHeight
+                ? { width: camVideo.videoWidth, height: camVideo.videoHeight }
+                : camSource.size;
+
+            if (inputSize) {
+                drawWebcam(ctx, camVideo, outputSize, inputSize);
+            }
+        }
     };
-
-
 
     // Canvas Sizing
     useEffect(() => {
         if (canvasRef.current && outputVideoSize) {
             canvasRef.current.width = outputVideoSize.width;
             canvasRef.current.height = outputVideoSize.height;
-            renderPipeline(); // Force draw on resize
+            renderPipeline();
         }
     }, [outputVideoSize.width, outputVideoSize.height]);
 
@@ -174,19 +204,16 @@ export const PlayerCanvas = () => {
         const video = e.currentTarget;
         console.log(`[PlayerCanvas] Source Loaded: ${sourceId} (${video.videoWidth}x${video.videoHeight})`);
 
-        // Update Project Store with real dimensions/duration
         updateSource(sourceId, {
             size: { width: video.videoWidth, height: video.videoHeight },
             durationMs: video.duration * 1000,
         });
 
-        // Force re-render pipeline
         renderPipeline();
     };
 
     return (
         <>
-            {/* Hidden Source Container */}
             <div style={{ display: 'none' }}>
                 {project.background?.type === 'image' && project.background.imageUrl && (
                     <img
@@ -215,7 +242,6 @@ export const PlayerCanvas = () => {
                 ))}
             </div>
 
-            {/* Render Target */}
             <canvas
                 ref={canvasRef}
                 className="w-full h-full"
@@ -223,7 +249,7 @@ export const PlayerCanvas = () => {
                     backgroundColor: '#000',
                     width: '100%',
                     height: '100%',
-                    objectFit: 'contain' // CSS scaling handled by parent
+                    objectFit: 'contain'
                 }}
             />
         </>

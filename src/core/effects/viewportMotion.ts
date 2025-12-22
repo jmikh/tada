@@ -1,6 +1,5 @@
-import type { UserEvent, ViewportMotion, Size, MouseEvent, Rect, Clip } from '../types.ts';
+import type { UserEvent, ViewportMotion, Size, MouseEvent, Rect, ClickEvent, HoverEvent } from '../types.ts';
 import { ViewTransform } from './viewTransform.ts';
-import { mapEventsToTimeline } from './timeMapper.ts';
 
 export * from './viewTransform.ts';
 
@@ -8,27 +7,21 @@ export * from './viewTransform.ts';
 // Core Abstractions
 // ============================================================================
 
-
 /**
  * Analyzes a stream of UserEvents to detect periods where the mouse remains
  * relatively stationary (within a bounding box) for a minimum duration.
  * Returns these periods as synthetic 'HoverEvents'.
- * 
- * @param events List of user events (can be raw or mapped to timeline)
- * @param inputSize Dimensions of the input view to determine hover bounding box size
  */
 export function findHoverEvents(
     events: UserEvent[],
     inputSize: Size
 ): UserEvent[] {
-    // 1. Determine Box Size (10% of the bigger dimension)
     const boxSize = Math.max(inputSize.width, inputSize.height) * 0.1;
-    const minDuration = 1000; // 1 second in ms
+    const minDuration = 1000;
 
     const hoverEvents: UserEvent[] = [];
     let currentSegment: MouseEvent[] = [];
 
-    // Helper to process a continuous segment of mouse events
     const processSegment = (segment: MouseEvent[]) => {
         let i = 0;
         while (i < segment.length) {
@@ -38,16 +31,13 @@ export function findHoverEvents(
             let minY = segment[i].y;
             let maxY = segment[i].y;
 
-            // Greedy expansion: find the longest sequence starting at i that fits in the box
-            // TODO: this ineffecient, might be find if we only calculate on clip changes.
             while (j < segment.length) {
-                const p = segment[j];
+                const p = segment[j]; // p is MouseEvent
                 const newMinX = Math.min(minX, p.x);
                 const newMaxX = Math.max(maxX, p.x);
                 const newMinY = Math.min(minY, p.y);
                 const newMaxY = Math.max(maxY, p.y);
 
-                // Check if the bounding box dimensions are within the allowed boxSize
                 if ((newMaxX - newMinX) <= boxSize && (newMaxY - newMinY) <= boxSize) {
                     minX = newMinX;
                     maxX = newMaxX;
@@ -59,32 +49,25 @@ export function findHoverEvents(
                 }
             }
 
-            // Check if the identified block meets the duration requirement
-            // j is exclusive, so the block is events[i] to events[j-1]
             if (j > i) {
                 const startEvent = segment[i];
                 const endEvent = segment[j - 1];
                 const duration = endEvent.timestamp - startEvent.timestamp;
 
                 if (duration >= minDuration) {
-                    // Valid Hover Block found
                     const points = segment.slice(i, j);
                     const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
                     const centerY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
 
                     hoverEvents.push({
                         type: 'hover',
-                        timestamp: startEvent.timestamp,
+                        timestamp: startEvent.timestamp, // Source Time
                         x: centerX,
                         y: centerY,
                         endTime: endEvent.timestamp
-                    } as UserEvent); // Cast needed if TS strictness issues with union, but actually fits HoverEvent
-
-                    // Advance i to j to continue searching after this block
-                    // (Try to fill "already created" implies we took the max possible, so we move on)
+                    } as UserEvent);
                     i = j;
                 } else {
-                    // Sequence too short, try starting from the next point
                     i++;
                 }
             } else {
@@ -93,12 +76,10 @@ export function findHoverEvents(
         }
     };
 
-    // 2. Iterate events and split by separators (clicks, etc.)
     for (const evt of events) {
         if (evt.type === 'mouse') {
-            currentSegment.push(evt);
-        } else if (evt.type === 'click' || evt.type === 'url') {
-            // These events break the "hover" continuity
+            currentSegment.push(evt as MouseEvent);
+        } else if ((evt as any).type === 'click' || (evt as any).type === 'url') {
             if (currentSegment.length > 0) {
                 processSegment(currentSegment);
                 currentSegment = [];
@@ -106,7 +87,7 @@ export function findHoverEvents(
         }
     }
 
-    // Process potential remaining segment
+
     if (currentSegment.length > 0) {
         processSegment(currentSegment);
     }
@@ -116,68 +97,38 @@ export function findHoverEvents(
 
 export function calculateZoomSchedule(
     maxZoom: number,
-    viewTransform: ViewTransform, // Kept for signature compatibility
-    events: UserEvent[],
-    clips: Clip[]
+    viewTransform: ViewTransform,
+    events: UserEvent[]
 ): ViewportMotion[] {
     const motions: ViewportMotion[] = [];
 
-    // 1. Filter & Map Raw Events to Output Time (Applies Cuts & Latency)
-    const mappedEvents = mapEventsToTimeline(events, clips);
+    if (events.length === 0) return motions;
 
-    if (mappedEvents.length === 0) {
-        return motions;
-    }
+    // 1. Detect Hovers in Source Space
+    const hoverEvents = findHoverEvents(events, viewTransform.inputVideoSize);
 
-    // 2. Detect Hovers on the TIMELINE (Visual Hovers)
-    // We project the mapped events to a flat list using timeline time.
-    // This ensures we detect hovers that exist *after* editing (e.g. across cuts).
-    const timelineEvents: UserEvent[] = mappedEvents.map(m => ({
-        ...m.originalEvent,
-        timestamp: m.outputTime // Override with Timeline Time
-    }));
+    // 2. Merge Clicks and Hovers
+    const relevantEvents = [
+        ...events.filter(e => e.type === 'click'),
+        ...hoverEvents
+    ].sort((a, b) => a.timestamp - b.timestamp);
 
-    const hoverEvents = findHoverEvents(timelineEvents, viewTransform.inputVideoSize);
-
-    // 3. Inject Hovers back into mappedEvents
-    for (const hEvent of hoverEvents) {
-        if (hEvent.type !== 'hover') continue;
-
-        mappedEvents.push({
-            outputTime: hEvent.timestamp,
-            originalEvent: hEvent
-        });
-    }
-
-    // 4. Re-sort (since we added new events)
-    mappedEvents.sort((a, b) => a.outputTime - b.outputTime);
-
-    // 5. Prepare for Zoom Level Calculation (Output Space)
-    // Zoom 1x = Full Output Size.
-    // Zoom 2x = Half Output Size (centered).
     const zoomLevel = maxZoom;
-
     const targetWidth = viewTransform.outputVideoSize.width / zoomLevel;
     const targetHeight = viewTransform.outputVideoSize.height / zoomLevel;
 
-    // Default duration for a zoom "scene" around a click
     const ZOOM_HOLD_DURATION = 2000;
     const ZOOM_TRANSITION_DURATION = 500;
 
-    for (let i = 0; i < mappedEvents.length; i++) {
-        const { outputTime, originalEvent: evt } = mappedEvents[i];
+    for (let i = 0; i < relevantEvents.length; i++) {
+        const evt = relevantEvents[i] as (ClickEvent | HoverEvent); // Safe cast given logic above
 
-        if (evt.type !== 'click' && evt.type !== 'hover') continue;
-
-        // 1. Map Click to Output Space
+        // Map Click to Output Space (Viewport)
         const clickOutput = viewTransform.inputToOutput({ x: evt.x, y: evt.y });
 
-        // 2. Center Viewport on Click
+        // Center Viewport
         let viewportX = clickOutput.x - targetWidth / 2;
         let viewportY = clickOutput.y - targetHeight / 2;
-
-        // 3. Clamp to Output Space Edges
-        // The Viewport must stay within the Output Canvas (0,0 -> OutputW, OutputH)
 
         const maxX = viewTransform.outputVideoSize.width - targetWidth;
         const maxY = viewTransform.outputVideoSize.height - targetHeight;
@@ -195,26 +146,27 @@ export function calculateZoomSchedule(
             height: targetHeight
         };
 
-        // Timing Logic (All in Output Time / Timeline Time)
-        const timeIn = Math.max(0, outputTime - ZOOM_TRANSITION_DURATION);
-
-        // We arrive at target exactly at click time
-        const arrivalTime = outputTime;
+        // Determine Arrival Time (Source Time)
+        // We want to arrive at the target exactly when the event happens
+        const arrivalTime = evt.timestamp;
 
         motions.push({
-            id: crypto.randomUUID(),
-            timeInMs: timeIn,
-            timeOutMs: arrivalTime,
-            viewport: newViewport,
-            easing: 'ease_in_out'
+            endTimeMs: arrivalTime,
+            durationMs: ZOOM_TRANSITION_DURATION,
+            rect: newViewport
         });
 
-        // Hold the zoom
-        const nextMapped = mappedEvents[i + 1];
+        // Hold and Zoom Out Logic
+        // Check if next event is close
+        const nextEvt = relevantEvents[i + 1];
         const holdUntil = arrivalTime + ZOOM_HOLD_DURATION;
 
-        if (nextMapped && nextMapped.outputTime < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
-            // Stay zoomed
+        if (nextEvt && nextEvt.timestamp < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
+            // Stay zoomed (the next loop iteration will handle moving to next target)
+            // But we might need a bridge motion?
+            // "ViewportMotion" model implies transition TO a state.
+            // If we are at State A at T1. Next motion is State B at T2.
+            // Logic in getViewportStateAtTime handles holding A until B starts?
         } else {
             // Zoom out to full view
             const fullView: Rect = {
@@ -227,11 +179,9 @@ export function calculateZoomSchedule(
             const zoomOutEnd = zoomOutStart + ZOOM_TRANSITION_DURATION;
 
             motions.push({
-                id: crypto.randomUUID(),
-                timeInMs: zoomOutStart,
-                timeOutMs: zoomOutEnd,
-                viewport: fullView,
-                easing: 'ease_in_out'
+                endTimeMs: zoomOutEnd,
+                durationMs: ZOOM_TRANSITION_DURATION,
+                rect: fullView
             });
         }
     }
@@ -240,16 +190,12 @@ export function calculateZoomSchedule(
 }
 
 // ============================================================================
-// Runtime Execution / Interpolation
+// Runtime Execution / Interpolation (Source Space)
 // ============================================================================
 
-/*
- * Calculates the current Viewport (in Output Space)
- * based on the list of motions and the current time.
- */
 export function getViewportStateAtTime(
     motions: ViewportMotion[],
-    timeMs: number,
+    sourceTimeMs: number,
     fullSize: Size
 ): Rect {
     const fullRect: Rect = { x: 0, y: 0, width: fullSize.width, height: fullSize.height };
@@ -258,64 +204,41 @@ export function getViewportStateAtTime(
         return fullRect;
     }
 
-    // Ensure motions are sorted
-    const sortedMotions = [...motions].sort((a, b) => a.timeInMs - b.timeInMs);
+    // Motions are stored by endTime. Sort just in case.
+    const sortedMotions = [...motions].sort((a, b) => a.endTimeMs - b.endTimeMs);
 
-    // Before first motion
-    if (timeMs < sortedMotions[0].timeInMs) {
-        return fullRect;
-    }
+    // 1. Find the active motion or the last completed motion
+    // A motion defines the state at 'endTimeMs'.
+    // Between (endTimeMs - duration) and endTimeMs, we interpolate.
+    // Before that, we hold the previous motion's end state.
 
-    // After last motion
-    const lastMotion = sortedMotions[sortedMotions.length - 1];
-    if (timeMs >= lastMotion.timeOutMs) {
-        return lastMotion.viewport;
-    }
+    let currentRect = fullRect;
 
-    // Find the relevant motion segment
-    for (let i = 0; i < sortedMotions.length; i++) {
-        const curr = sortedMotions[i];
+    for (const motion of sortedMotions) {
+        const startTime = motion.endTimeMs - motion.durationMs;
 
-        // Case: Inside a motion (Interpolating)
-        if (timeMs >= curr.timeInMs && timeMs < curr.timeOutMs) {
-            let startRect = fullRect;
-            if (i > 0) {
-                startRect = sortedMotions[i - 1].viewport;
-            }
-
-            const duration = curr.timeOutMs - curr.timeInMs;
-            const elapsed = timeMs - curr.timeInMs;
-            const progress = duration === 0 ? 1 : elapsed / duration;
-
-            const easedProgress = applyEasing(progress, curr.easing);
-
-            return interpolateRect(startRect, curr.viewport, easedProgress);
+        if (sourceTimeMs >= startTime && sourceTimeMs <= motion.endTimeMs) {
+            // Inside transition
+            const progress = (sourceTimeMs - startTime) / motion.durationMs;
+            const eased = applyEasing(progress); // Assuming linear or simple ease
+            return interpolateRect(currentRect, motion.rect, eased);
+        } else if (sourceTimeMs < startTime) {
+            // Before this motion starts. 
+            // We are holding 'currentRect' (result of previous iteration).
+            return currentRect;
         }
 
-        // Case: Between motions (Holding previous target)
-        if (i < sortedMotions.length - 1) {
-            const next = sortedMotions[i + 1];
-            if (timeMs >= curr.timeOutMs && timeMs < next.timeInMs) {
-                return curr.viewport;
-            }
-        }
+        // We passed this motion. It strictly applied.
+        // Update currentRect to be this motion's target.
+        currentRect = motion.rect;
     }
 
-    return fullRect;
+    // If we passed all motions, we hold the last one
+    return currentRect;
 }
 
-function applyEasing(t: number, type: ViewportMotion['easing']): number {
-    switch (type) {
-        case 'ease_in':
-            return t * t;
-        case 'ease_out':
-            return t * (2 - t);
-        case 'ease_in_out':
-            return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-        case 'linear':
-        default:
-            return t;
-    }
+function applyEasing(t: number): number {
+    return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // Ease In Out
 }
 
 function interpolateRect(from: Rect, to: Rect, t: number): Rect {

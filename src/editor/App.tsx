@@ -3,7 +3,7 @@ import { PlayerCanvas } from './player/PlayerCanvas';
 import { BackgroundPanel } from './BackgroundPanel';
 // import { useEditorStore } from './store'; // REMOVED
 import { loadSessionData } from './session/sessionLoader';
-import { useProjectStore, useProjectData, useMaxZoom } from './stores/useProjectStore';
+import { useProjectStore, useProjectData } from './stores/useProjectStore';
 // import { usePlaybackStore } from './stores/usePlaybackStore';
 import { Timeline } from './timeline/Timeline';
 import { EventInspector } from './EventInspector';
@@ -11,12 +11,13 @@ import { HoverInspector } from './HoverInspector';
 // import { useProject } from '../hooks/useProject'; // REMOVED
 import { ProjectImpl } from '../core/project/Project';
 // import { TimelineImpl } from '../core/timeline/Timeline'; // Unused
-import { TrackImpl } from '../core/timeline/Track';
-import { ClipImpl } from '../core/timeline/Clip';
-import type { Source, MainTrack } from '../core/types';
-import { ViewTransform } from '../core/effects/viewTransform';
-import { calculateZoomSchedule } from '../core/effects/viewportMotion';
-import { generateMouseEffects } from '../core/effects/mouseEffects';
+// import { TrackImpl } from '../core/timeline/Track'; // REMOVED
+// import { ClipImpl } from '../core/timeline/Clip'; // REMOVED
+import type { Source } from '../core/types';
+// import { ViewTransform } from '../core/effects/viewTransform'; // Unused now? Or used for Tooltip? 
+// Tooltip logic uses "inputToOutput" math directly or similar. App.tsx logic uses raw math.
+// Remove unused imports.
+import { generateRecordingEvents } from '../core/effects/mouseEffects';
 
 
 
@@ -29,7 +30,7 @@ function Editor() {
     // -- Project State --
     const project = useProjectData();
     const loadProject = useProjectStore(s => s.loadProject);
-    const maxZoom = useMaxZoom(); // Selected from project
+    // const maxZoom = 2.0; // Hardcode or default since usage was removed from store
 
     // Load Session & Initialize Project
     useEffect(() => {
@@ -88,76 +89,64 @@ function Editor() {
     }, []);
 
     // Reactive Project Initialization: Create Tracks once Sources are ready
+
+    // ... imports ...
+
+    // Reactive Project Initialization: Create Recording & Windows
     useEffect(() => {
-        const proj = useProjectStore.getState().project;
-        const mainTrack = proj.timeline.mainTrack;
-        const overlayTrack = proj.timeline.overlayTrack;
+        const state = useProjectStore.getState();
+        const proj = state.project;
+        const timeline = proj.timeline;
 
         const screenSourceId = Object.keys(proj.sources).find(id => id.includes('screen'));
         const cameraSourceId = Object.keys(proj.sources).find(id => id.includes('camera'));
 
-        // 1. Initialize Main Track (Screen)
-        if (mainTrack.clips.length === 0 && screenSourceId) {
+        // 1. Initialize Screen Recording Source & Events
+        if (screenSourceId && timeline.recording.screenSourceId !== screenSourceId) {
+            console.log('Initializing Recording Source');
             const source = proj.sources[screenSourceId];
-            if (source.size.width > 0 && source.durationMs > 0) {
-                console.log('Screen Source Ready, Creating Main Track');
 
-                let track = TrackImpl.createMainTrack('Screen Recording');
+            // Extract Events
+            let clickEvents: any[] = [];
+            let dragEvents: any[] = [];
 
-                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0, { linkGroupId: source.id });
+            if (source.events && source.events.length > 0) {
+                const extracted = generateRecordingEvents(source.events);
+                clickEvents = extracted.clickEvents;
+                dragEvents = extracted.dragEvents;
+            }
 
-                // Generate Metadata Effects
-                if (source.events && source.events.length > 0) {
-                    const viewTransform = new ViewTransform(
-                        source.size,
-                        proj.outputSettings.size,
-                        track.displaySettings.padding
-                    );
-                    track.viewportMotions = calculateZoomSchedule(maxZoom, viewTransform, source.events, [clip]);
-                    track.mouseEffects = generateMouseEffects(source.events, [clip]);
-                }
+            // Update Recording
+            state.updateRecording({
+                screenSourceId,
+                clickEvents,
+                dragEvents,
+                // ViewportMotions: we punt on them as per plan? 
+                // Or we could calculate them using the old logic but adapted?
+                // User said "move time translation logic... into player".
+                // But viewport motions are "calculated". 
+                // Let's leave viewportMotions empty for now or perform simple calc if needed.
+            });
 
-                const trackWithClip = TrackImpl.addClip(track, clip) as MainTrack;
+            // 2. Add Default Output Window if none
+            if (timeline.outputWindows.length === 0 && source.durationMs > 0) {
+                state.addOutputWindow({
+                    id: crypto.randomUUID(),
+                    startMs: 0,
+                    endMs: source.durationMs
+                });
 
-                const newTimeline = { ...proj.timeline, mainTrack: trackWithClip };
-                loadProject({ ...proj, timeline: newTimeline });
-                // Return to avoid race conditions, let effect re-run
-                return;
+                // Also update timeline total duration to match source
+                state.updateTimeline({ durationMs: source.durationMs });
             }
         }
 
-        // 2. Initialize Overlay Track (Camera)
-        // Only if we have a camera source and no overlay track (or empty overlay track)
-        if (cameraSourceId && (!overlayTrack || overlayTrack.clips.length === 0)) {
-            const source = proj.sources[cameraSourceId];
-            // Wait for metadata
-            if (source.size.width > 0 && source.durationMs > 0) {
-                console.log('Camera Source Ready, Creating Overlay Track');
-
-                let track = overlayTrack;
-                if (!track) {
-                    track = {
-                        id: crypto.randomUUID(),
-                        type: 'overlay', // or 'video'
-                        name: 'Camera',
-                        clips: [],
-                        muted: false,
-                        locked: false,
-                        visible: true
-                    };
-                }
-
-                // Create Clip
-                // Link with Main Track (Screen)
-                const linkGroupId = screenSourceId;
-                const clip = ClipImpl.create(source.id, 0, source.durationMs, 0, { linkGroupId });
-                const trackWithClip = TrackImpl.addClip(track, clip);
-
-                const newTimeline = { ...proj.timeline, overlayTrack: trackWithClip };
-                loadProject({ ...proj, timeline: newTimeline });
-            }
+        // 3. Initialize Camera Source
+        if (cameraSourceId && timeline.recording.cameraSourceId !== cameraSourceId) {
+            state.updateRecording({ cameraSourceId });
         }
-    }, [project.sources, project.outputSettings, project.timeline]);
+
+    }, [project.sources, project.timeline.recording?.screenSourceId]);
 
 
     // Handle Resize for Centering

@@ -45,7 +45,7 @@ export interface Project {
      */
     sources: Record<ID, Source>;
 
-    /* The main timeline containing tracks and clips */
+    /* The main timeline containing the recording and output windows */
     timeline: Timeline;
 }
 
@@ -64,7 +64,6 @@ export interface OutputSettings {
 
 /**
  * Represents a raw media asset (File) that has been imported.
- * Clips reference these Sources.
  */
 export interface Source {
     id: ID;
@@ -87,164 +86,74 @@ export interface Source {
 // ==========================================
 
 /**
- * A Timeline represents a linear sequence of Tracks.
+ * A Timeline represents the sequence of events.
+ * It contains a single Recording and multiple OutputWindows.
  */
 export interface Timeline {
     id: ID;
-    /** The main track containing clips */
-    mainTrack: MainTrack;
-    /** Optional overlay track (e.g. For Camera bubble) */
-    overlayTrack?: Track;
-    /** Total duration of the timeline */
+    /** Total duration of the timeline in milliseconds */
     durationMs: TimeMs;
-}
 
-// ==========================================
-// TRACK
-// ==========================================
-
-/**
- * A container for Clips.
- * Base Track interface for generic operations.
- * All clips on a track must be non-overlapping.
- */
-export interface Track {
-    id: ID;
-    type: 'video' | 'audio' | 'overlay';
-    name: string;
-
-    // Constraints: Ordered by timelineIn, NO OVERLAPS allowed.
     /**
-     * List of clips on this track.
-     * MUST be sorted by `timelineInMs`.
-     * MUST NOT overlap.
+     * Ordered non-overlapping windows of time fitting inside duration 
+     * that will be outputted in the final video.
+     * Defaulted to screenSource duration.
      */
-    clips: Clip[];
+    outputWindows: OutputWindow[];
 
-    // State
-    muted: boolean;
-    locked: boolean;
-    visible: boolean;
+    /** The single recording containing source references and events */
+    recording: Recording;
 }
 
 /**
- * Main Track containing specialized effects and settings.
- * Only one Main Track exists per project usually (for the main screen recording).
+ * Defines a segment of the timeline that will be included in the final output.
  */
-export interface MainTrack extends Track {
-    /** 
-     * List of viewport motions (zoom/pan) applied to this track.
-     * These define "viewport" movement over time.
-     */
+export interface OutputWindow {
+    id: ID;
+    /** Timeline-based start time */
+    startMs: TimeMs;
+    /** Timeline-based end time */
+    endMs: TimeMs;
+}
+
+/**
+ * Represents the recording session data.
+ */
+export interface Recording {
+    /** Time from the beginning of the timeline at which video starts (defaults to 0) */
+    timelineOffsetMs: TimeMs;
+
+    screenSourceId: ID;
+    cameraSourceId?: ID;
+
+    clickEvents: ClickEvent[];
+    dragEvents: DragEvent[];
+
+    // We can punt on implementing the calculations of viewport motions until the end of implementation.
     viewportMotions: ViewportMotion[];
-
-    /**
-     * List of mouse effects (clicks, drags) derived from events.
-     */
-    mouseEffects?: MouseEffect[];
-
-    /** Visual settings for how the clip is rendered */
-    displaySettings: DisplaySettings;
 }
 
-// ==========================================
-// CLIP
-// ==========================================
-
-/**
- * A Clip is a segment of a Source placed on the Timeline.
- * It maps a range of Source Time to a range of Timeline Time.
- */
-export interface Clip {
-    id: ID;
-    /** ID of the Source media this clip plays */
-    sourceId: ID;
-
-    // Time Mapping
-    /** Start time in the SOURCE video (trim/in-point) */
-    sourceInMs: TimeMs;
-    /** End time in the SOURCE video (trim/out-point) */
-    sourceOutMs: TimeMs;
-
-    /** Start time on the TIMELINE where this clip begins playing */
-    timelineInMs: TimeMs;
-    // timelineOutMs is derived: timelineInMs + (sourceOutMs - sourceInMs)
-
-    // Properties
-    /** Playback speed multiplier (1.0 = normal, 0.5 = slow, 2.0 = fast) */
-    speed: number;
-
-    // Linkage
-    /**
-     * If multiple clips share a linkGroupId, they are considered "linked"
-     * and should be split, moved, or deleted together.
-     * (e.g. keeping Audio and Video in sync)
-     */
-    linkGroupId?: string;
-
-    audioVolume: number; // 0.0 to 1.0
-    audioMuted: boolean;
-}
-
-export interface DisplaySettings {
-    mode: 'fullscreen' | 'overlay';
-    maxZoom: number; // Max zoom intensity (e.g. 2.0)
-    backgroundColor: string;
-    padding: number; // Proportional padding (0.0 to 1.0)
-}
 
 // ==========================================
 // VIEWPORT MOTIONS
 // ==========================================
 
-export type EasingType = 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out';
-
-/**
- * Defines a viewport movement/state over time.
- * "Viewport Motion" model: The viewport moves from its previous state to the 'target' state
- * starting at 'timeInMs' and arriving at 'timeOutMs'.
- */
 export interface ViewportMotion {
-    id: ID;
-    /** Start of the zoom/pan interpolation */
-    timeInMs: TimeMs;
-    /** End of the zoom/pan interpolation (arrival at target) */
-    timeOutMs: TimeMs;
-
-    /** The target viewport (visible frame) in source coordinates */
-    viewport: Rect;
-
-    easing: EasingType;
+    /** End time in SOURCE time. */
+    endTimeMs: TimeMs;
+    durationMs: TimeMs;
+    rect: Rect;
 }
 
-// ==========================================
-// MOUSE EFFECTS
-// ==========================================
-
-export type MouseEffectType = 'click' | 'drag';
-
 /**
- * Represents a visual mouse action derived from raw events.
+ * Represents a drag action.
  */
-export interface MouseEffect {
-    id: ID;
-    type: MouseEffectType;
-
-    /** Start playing this effect */
-    timeInMs: TimeMs;
-    /** Stop playing this effect */
-    timeOutMs: TimeMs;
-
-    // Data for Rendering
-    start: Point;
-    end?: Point;
-
-    /** 
-     * For Drags: The actual path of the mouse during the drag.
-     * Contains sampled points with timestamps relative to the start of the effect? 
-     * Or absolute timestamps? Absolute is easier for lookup.
-     */
+export interface DragEvent extends BaseEvent {
+    type: 'drag';
+    // Add properties relevant to drag if needed, for now keeping it minimal or similar to MouseEffect
     path?: TimestampedPoint[];
+    start: Point;
+    end: Point;
 }
 
 // ==========================================
@@ -316,3 +225,4 @@ export interface BackgroundSettings {
     color?: string; // Hex code, e.g. #FFFFFF
     imageUrl?: string; // Path to image (e.g. /assets/backgrounds/foo.jpg)
 }
+

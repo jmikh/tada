@@ -1,23 +1,20 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Project, ID } from '../../core/types';
+import type { Project, ID, Recording, OutputWindow } from '../../core/types';
 import { ProjectImpl } from '../../core/project/Project';
-import { TimelineImpl } from '../../core/timeline/Timeline';
-import { calculateZoomSchedule, ViewTransform } from '../../core/effects/viewportMotion';
-import { generateMouseEffects } from '../../core/effects/mouseEffects';
-import type { ViewportMotion, MouseEffect } from '../../core/types';
 
 interface ProjectState {
     project: Project;
 
     // Actions
     loadProject: (project: Project) => void;
-    // We can add granular setters here later (e.g. setMaxZoom) to avoid replacing whole project
-    setMaxZoom: (maxZoom: number) => void;
 
     // Timeline Actions
-    splitAt: (timeMs: number) => void;
-    updateClip: (trackId: ID, clip: import('../../core/types').Clip) => void;
+    updateRecording: (updates: Partial<Recording>) => void;
+    updateTimeline: (updates: Partial<import('../../core/types').Timeline>) => void;
+    addOutputWindow: (window: OutputWindow) => void;
+    updateOutputWindow: (id: ID, updates: Partial<OutputWindow>) => void;
+    removeOutputWindow: (id: ID) => void;
     updateSource: (sourceId: ID, updates: Partial<import('../../core/types').Source>) => void;
 }
 
@@ -29,68 +26,88 @@ export const useProjectStore = create<ProjectState>()(
 
             loadProject: (project) => set({ project }),
 
-            setMaxZoom: (maxZoom) => set((state) => ({
+            updateRecording: (updates) => set((state) => ({
                 project: {
                     ...state.project,
                     timeline: {
                         ...state.project.timeline,
-                        mainTrack: {
-                            ...state.project.timeline.mainTrack,
-                            displaySettings: {
-                                ...state.project.timeline.mainTrack.displaySettings,
-                                maxZoom
-                            }
+                        recording: {
+                            ...state.project.timeline.recording,
+                            ...updates
                         }
                     },
                     updatedAt: new Date()
                 }
             })),
 
-            splitAt: (timeMs) => set((state) => {
-                const newTimeline = TimelineImpl.splitAt(state.project.timeline, timeMs);
-                return {
-                    project: {
-                        ...state.project,
-                        timeline: newTimeline,
-                        updatedAt: new Date()
-                    }
-                };
-            }),
-
-            updateClip: (trackId, clip) => set((state) => {
-                try {
-                    const newTimeline = TimelineImpl.updateClip(state.project.timeline, trackId, clip);
-                    let newProject = {
-                        ...state.project,
-                        timeline: newTimeline,
-                        updatedAt: new Date()
-                    };
-
-                    // Recalculate effects because modifying clip boundaries (trimming/moving)
-                    // changes which source events are visible and where they appear on the timeline.
-                    newProject = recalculateTrackEffects(newProject);
-
-                    return { project: newProject };
-                } catch (e) {
-                    console.error("Failed to update clip:", e);
-                    return state;
+            updateTimeline: (updates: Partial<import('../../core/types').Timeline>) => set((state) => ({
+                project: {
+                    ...state.project,
+                    timeline: {
+                        ...state.project.timeline,
+                        ...updates
+                    },
+                    updatedAt: new Date()
                 }
-            }),
+            })),
+
+            addOutputWindow: (window) => set((state) => ({
+                project: {
+                    ...state.project,
+                    timeline: {
+                        ...state.project.timeline,
+                        outputWindows: [...state.project.timeline.outputWindows, window].sort((a, b) => a.startMs - b.startMs)
+                    },
+                    updatedAt: new Date()
+                }
+            })),
+
+            updateOutputWindow: (id, updates) => set((state) => ({
+                project: {
+                    ...state.project,
+                    timeline: {
+                        ...state.project.timeline,
+                        outputWindows: state.project.timeline.outputWindows
+                            .map(w => w.id === id ? { ...w, ...updates } : w)
+                            .sort((a, b) => a.startMs - b.startMs)
+                    },
+                    updatedAt: new Date()
+                }
+            })),
+
+            removeOutputWindow: (id) => set((state) => ({
+                project: {
+                    ...state.project,
+                    timeline: {
+                        ...state.project.timeline,
+                        outputWindows: state.project.timeline.outputWindows.filter(w => w.id !== id)
+                    },
+                    updatedAt: new Date()
+                }
+            })),
 
             updateSource: (sourceId, updates) => set((state) => ({
                 project: ProjectImpl.updateSource(state.project, sourceId, updates)
             })),
         }),
         {
-            name: 'recordo-project-storage', // name of the item in the storage (must be unique)
+            name: 'recordo-project-storage',
             storage: createJSONStorage(() => localStorage),
-            partialize: (state) => ({ project: state.project }), // Only persist the project
+            partialize: (state) => ({ project: state.project }),
             onRehydrateStorage: () => (state) => {
-                if (state && state.project && !state.project.background) {
-                    state.project.background = {
-                        type: 'solid',
-                        color: '#1e1e1e'
-                    };
+                if (state && state.project) {
+                    // Migration: If background is missing
+                    if (!state.project.background) {
+                        state.project.background = {
+                            type: 'solid',
+                            color: '#1e1e1e'
+                        };
+                    }
+                    // Migration: If recording is missing (legacy state), reset project
+                    if (!state.project.timeline.recording) {
+                        console.warn('Refactor Update: Resetting legacy project state.');
+                        state.project = ProjectImpl.create('New Project');
+                    }
                 }
             }
         }
@@ -98,75 +115,8 @@ export const useProjectStore = create<ProjectState>()(
 );
 
 // --- Selectors ---
-// Explicit strongly typed selectors to prevent re-renders
 
 export const useProjectData = () => useProjectStore(s => s.project);
-export const useMaxZoom = () => useProjectStore(s => s.project.timeline.mainTrack.displaySettings.maxZoom);
-export const useProjectDisplaySettings = () => useProjectStore(s => s.project.timeline.mainTrack.displaySettings);
 export const useProjectTimeline = () => useProjectStore(s => s.project.timeline);
 export const useProjectSources = () => useProjectStore(s => s.project.sources);
-
-/**
- * Recalculates zoom and mouse effects for the Main Track based on current clips.
- * Should be called whenever clips are split, removed, or updated (trimmed/moved).
- */
-function recalculateTrackEffects(project: Project): Project {
-    const mainTrack = project.timeline.mainTrack;
-    const clips = mainTrack.clips;
-
-    // 1. Collect unique Sources used in this track
-    const sourceIds = new Set(clips.map(c => c.sourceId));
-
-    let allMotions: ViewportMotion[] = [];
-    let allMouseEffects: MouseEffect[] = [];
-
-    // 2. For each source, calculate effects restricted to the clips using that source
-    for (const sourceId of sourceIds) {
-        const source = project.sources[sourceId];
-        if (!source || !source.events || source.events.length === 0) continue;
-
-        // Get clips for this source
-        const sourceClips = clips.filter(c => c.sourceId === sourceId);
-
-        // Reconstruct ViewTransform (needed for Zoom Schedule)
-        // We assume track padding settings are constant for now
-        const viewTransform = new ViewTransform(
-            source.size,
-            project.outputSettings.size,
-            mainTrack.displaySettings.padding
-        );
-
-        // Calculate Effects
-        const motions = calculateZoomSchedule(
-            mainTrack.displaySettings.maxZoom,
-            viewTransform,
-            source.events,
-            sourceClips
-        );
-
-        const mouseEffects = generateMouseEffects(
-            source.events,
-            sourceClips
-        );
-
-        allMotions = allMotions.concat(motions);
-        allMouseEffects = allMouseEffects.concat(mouseEffects);
-    }
-
-    // 3. Sort Combined Effects by Time
-    allMotions.sort((a, b) => a.timeInMs - b.timeInMs);
-    allMouseEffects.sort((a, b) => a.timeInMs - b.timeInMs);
-
-    // 4. Update Project with new effects
-    return {
-        ...project,
-        timeline: {
-            ...project.timeline,
-            mainTrack: {
-                ...mainTrack,
-                viewportMotions: allMotions,
-                mouseEffects: allMouseEffects
-            }
-        }
-    };
-}
+export const useRecording = () => useProjectStore(s => s.project.timeline.recording);
