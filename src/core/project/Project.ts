@@ -1,7 +1,7 @@
 
 import type { Project, ID, TimeMs, Source, Track } from '../types';
-import { TimelineImpl } from '../timeline/timeline';
-import { TrackImpl } from '../timeline/track';
+import { TimelineImpl } from '../timeline/Timeline';
+import { TrackImpl } from '../timeline/Track';
 
 /**
  * Represents the resolved state of the timeline at a specific point in time.

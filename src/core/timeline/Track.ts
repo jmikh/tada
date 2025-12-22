@@ -1,5 +1,5 @@
 import type { Track, MainTrack, Clip, TimeMs } from '../types';
-import { ClipImpl } from './clip';
+import { ClipImpl } from './Clip';
 
 /**
  * Functional logic for Track operations.

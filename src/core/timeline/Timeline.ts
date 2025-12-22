@@ -1,6 +1,6 @@
 import type { Timeline, MainTrack, TimeMs, ID, Clip, Track } from '../types';
-import { TrackImpl } from './track';
-import { ClipImpl } from './clip'; // Used
+import { TrackImpl } from './Track';
+import { ClipImpl } from './Clip'; // Used
 
 /**
  * Functional logic for Timeline operations.

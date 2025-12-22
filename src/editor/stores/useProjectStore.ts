@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Project, ID } from '../../core/types';
-import { ProjectImpl } from '../../core/project/project';
-import { TimelineImpl } from '../../core/timeline/timeline';
+import { ProjectImpl } from '../../core/project/Project';
+import { TimelineImpl } from '../../core/timeline/Timeline';
 import { calculateZoomSchedule, ViewTransform } from '../../core/effects/viewportMotion';
 import { generateMouseEffects } from '../../core/effects/mouseEffects';
 import type { ViewportMotion, MouseEffect } from '../../core/types';

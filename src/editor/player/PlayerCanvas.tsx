@@ -7,7 +7,7 @@ import { drawBackground } from './backgroundPainter';
 import { drawWebcam } from './webcamPainter';
 import { useProjectStore, useProjectData } from '../stores/useProjectStore';
 import { usePlaybackStore } from '../stores/usePlaybackStore';
-import { ProjectImpl } from '../../core/project/project';
+import { ProjectImpl } from '../../core/project/Project';
 
 
 

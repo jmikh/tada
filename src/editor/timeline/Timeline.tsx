@@ -334,29 +334,7 @@ export function Timeline() {
                             );
                         })()}
 
-                        {/* Render Overlay Track */}
-                        {timeline.overlayTrack && timeline.overlayTrack.visible && (
-                            <div key={timeline.overlayTrack.id} className="flex flex-col mt-4">
-                                {(() => {
-                                    const track = timeline.overlayTrack!;
-                                    // Optimistic Update
-                                    const displayClips = track.clips.map(c =>
-                                        (dragState && dragState.trackId === track.id && dragState.clipId === c.id)
-                                            ? dragState.currentClip
-                                            : c
-                                    );
 
-                                    return (
-                                        <TimelineTrackVideo
-                                            clips={displayClips}
-                                            pixelsPerSec={pixelsPerSec}
-                                            trackHeight={TRACK_HEIGHT}
-                                            onDragStart={(e, id, type) => handleDragStart(e, id, type, track.id)}
-                                        />
-                                    );
-                                })()}
-                            </div>
-                        )}
                     </div>
 
                     {/* Hover Line */}

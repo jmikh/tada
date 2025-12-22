@@ -9,10 +9,10 @@ import { Timeline } from './timeline/Timeline';
 import { EventInspector } from './EventInspector';
 import { HoverInspector } from './HoverInspector';
 // import { useProject } from '../hooks/useProject'; // REMOVED
-import { ProjectImpl } from '../core/project/project';
-// import { TimelineImpl } from '../core/timeline/timeline'; // Unused
-import { TrackImpl } from '../core/timeline/track';
-import { ClipImpl } from '../core/timeline/clip';
+import { ProjectImpl } from '../core/project/Project';
+// import { TimelineImpl } from '../core/timeline/Timeline'; // Unused
+import { TrackImpl } from '../core/timeline/Track';
+import { ClipImpl } from '../core/timeline/Clip';
 import type { Source, MainTrack } from '../core/types';
 import { ViewTransform } from '../core/effects/viewTransform';
 import { calculateZoomSchedule } from '../core/effects/viewportMotion';
