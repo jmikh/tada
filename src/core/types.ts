@@ -36,6 +36,9 @@ export interface Project {
     /* Global output settings for rendering */
     outputSettings: OutputSettings;
 
+    /* Zoom configuration */
+    zoom: ZoomSettings;
+
     /* Background configuration for the canvas */
     background: BackgroundSettings;
 
@@ -56,6 +59,11 @@ export interface OutputSettings {
     size: Size;
     frameRate: number;
     // We can add bitrate/etc later
+}
+
+export interface ZoomSettings {
+    maxZoom: number;
+    auto: boolean;
 }
 
 // ==========================================
@@ -129,7 +137,6 @@ export interface Recording {
     clickEvents: ClickEvent[];
     dragEvents: DragEvent[];
 
-    // We can punt on implementing the calculations of viewport motions until the end of implementation.
     viewportMotions: ViewportMotion[];
 }
 
@@ -210,13 +217,6 @@ export interface HoverEvent extends BaseEvent, Point {
 }
 
 export type UserEvent = ClickEvent | MouseEvent | UrlEvent | KeystrokeEvent | MouseDownEvent | MouseUpEvent | HoverEvent;
-
-export interface ZoomConfig {
-    zoomIntensity: number; // Global zoom setting (e.g. 1.0)
-    zoomDuration: number; // Duration of validity (e.g. 2000ms)
-    zoomOffset: number;   // Start time relative to event timestamp (e.g. -2000ms starts 2s before)
-}
-
 
 export type BackgroundType = 'solid' | 'image';
 

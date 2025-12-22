@@ -42,6 +42,10 @@ export class ProjectImpl {
                 size: { width: 3840, height: 2160 },
                 frameRate: 30
             },
+            zoom: {
+                maxZoom: 2.0,
+                auto: true
+            },
             background: {
                 type: 'solid',
                 color: '#1e1e1e'

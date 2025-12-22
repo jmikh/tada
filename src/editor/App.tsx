@@ -14,9 +14,8 @@ import { ProjectImpl } from '../core/project/Project';
 // import { TrackImpl } from '../core/timeline/Track'; // REMOVED
 // import { ClipImpl } from '../core/timeline/Clip'; // REMOVED
 import type { Source } from '../core/types';
-// import { ViewTransform } from '../core/effects/viewTransform'; // Unused now? Or used for Tooltip? 
-// Tooltip logic uses "inputToOutput" math directly or similar. App.tsx logic uses raw math.
-// Remove unused imports.
+import { ViewTransform } from '../core/effects/viewTransform';
+import { calculateZoomSchedule } from '../core/effects/viewportMotion';
 import { generateRecordingEvents } from '../core/effects/mouseEffects';
 
 
@@ -123,15 +122,23 @@ function Editor() {
             }
 
             // Update Recording
+            // ViewportMotions: Calculate Zoom Schedule
+            let viewportMotions: any[] = [];
+
+            // We need the view transform to calculate target viewports
+            // We need the view transform to calculate target viewports
+
+            if (source.size && proj.zoom.auto) {
+                const transform = new ViewTransform(source.size, proj.outputSettings.size, 0);
+                // Use source.events (raw) which contains clicks/moves
+                viewportMotions = calculateZoomSchedule(proj.zoom.maxZoom, transform, source.events || []);
+            }
+
             state.updateRecording({
                 screenSourceId,
                 clickEvents,
                 dragEvents,
-                // ViewportMotions: we punt on them as per plan? 
-                // Or we could calculate them using the old logic but adapted?
-                // User said "move time translation logic... into player".
-                // But viewport motions are "calculated". 
-                // Let's leave viewportMotions empty for now or perform simple calc if needed.
+                viewportMotions
             });
 
             // 2. Add Default Output Window if none
