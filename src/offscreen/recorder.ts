@@ -176,6 +176,29 @@ async function stopRecording() {
     // 1. Stop Recorders
     const promises = [];
 
+    // Capture dimensions before stopping
+    let screenDimensions: Size | undefined;
+    if (screenRecorder && screenRecorder.stream) {
+        const videoTrack = screenRecorder.stream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            if (settings.width && settings.height) {
+                screenDimensions = { width: settings.width, height: settings.height };
+            }
+        }
+    }
+
+    let cameraDimensions: Size | undefined;
+    if (cameraRecorder && cameraRecorder.stream) {
+        const videoTrack = cameraRecorder.stream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            if (settings.width && settings.height) {
+                cameraDimensions = { width: settings.width, height: settings.height };
+            }
+        }
+    }
+
     if (screenRecorder && screenRecorder.state !== 'inactive') {
         promises.push(new Promise<void>(resolve => {
             if (!screenRecorder) return resolve();
@@ -203,13 +226,13 @@ async function stopRecording() {
         const blob = new Blob(screenData, { type: 'video/webm' });
         // Get dimensions from tracks if possible, else 1920x1080 default
         // We will just store simple blob for now.
-        await saveToIndexedDB('latest', blob, startTime, duration, sessionId);
+        await saveToIndexedDB('latest', blob, startTime, duration, sessionId, screenDimensions);
     }
 
     // Save Camera
     if (cameraData.length > 0) {
         const blob = new Blob(cameraData, { type: 'video/webm' });
-        await saveToIndexedDB('latest-camera', blob, startTime, duration, sessionId);
+        await saveToIndexedDB('latest-camera', blob, startTime, duration, sessionId, cameraDimensions);
     }
 
     // 3. Cleanup & Notify
@@ -220,7 +243,14 @@ async function stopRecording() {
     chrome.runtime.sendMessage({ type: 'OPEN_EDITOR', url: 'src/editor/index.html' });
 }
 
-async function saveToIndexedDB(key: string, blob: Blob, startTime: number, duration: number, sessionId: string | null) {
+async function saveToIndexedDB(
+    key: string,
+    blob: Blob,
+    startTime: number,
+    duration: number,
+    sessionId: string | null,
+    dimensions?: Size
+) {
     return new Promise<void>((resolve, reject) => {
         const request = indexedDB.open('RecordoDB', 1);
 
@@ -236,16 +266,14 @@ async function saveToIndexedDB(key: string, blob: Blob, startTime: number, durat
             const transaction = db.transaction(['recordings'], 'readwrite');
             const store = transaction.objectStore('recordings');
 
-            // Find width/height? Complex to decode blob here. 
-            // We'll let the editor figure it out from the blob URL.
-
             const recording = {
                 id: key,
                 blob: blob,
                 duration: duration,
                 startTime: startTime,
                 timestamp: Date.now(),
-                sessionId: sessionId
+                sessionId: sessionId,
+                dimensions: dimensions
             };
 
             const putRequest = store.put(recording);

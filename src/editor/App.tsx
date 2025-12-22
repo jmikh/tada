@@ -54,12 +54,15 @@ function Editor() {
 
                 // Add Screen Source
                 if (!startProject.sources[screenSourceId]) {
+                    if (!data.dimensions) {
+                        throw new Error("Missing video dimensions in recording session");
+                    }
                     const source: Source = {
                         id: screenSourceId,
                         type: 'video',
                         url: data.videoUrl,
                         durationMs: data.recordingDuration || 0,
-                        size: { width: 0, height: 0 },
+                        size: data.dimensions,
                         hasAudio: true,
                         events: data.metadata || []
                     };
@@ -69,13 +72,16 @@ function Editor() {
 
                 // Add Camera Source
                 if (data.cameraUrl && !startProject.sources[cameraSourceId]) {
+                    if (!data.cameraDimensions) {
+                        throw new Error("Missing camera dimensions in recording session");
+                    }
                     const source: Source = {
                         id: cameraSourceId,
                         type: 'video',
                         url: data.cameraUrl,
                         durationMs: data.recordingDuration || 0,
-                        size: { width: 0, height: 0 },
-                        hasAudio: true // Camera usually has the Mic
+                        size: data.cameraDimensions,
+                        hasAudio: true
                     };
                     startProject = ProjectImpl.addSource(startProject, source);
                     projectUpdated = true;

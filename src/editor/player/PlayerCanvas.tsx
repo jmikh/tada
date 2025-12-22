@@ -1,7 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { ViewTransform } from '../../core/effects/viewTransform';
-import { getViewportStateAtTime } from '../../core/effects/viewportMotion';
-import { drawMouseEffects } from './mousePainter';
+import { drawScreen } from './screenPainter';
 import { drawBackground } from './backgroundPainter';
 import { drawWebcam } from './webcamPainter';
 import { useProjectStore, useProjectData } from '../stores/useProjectStore';
@@ -11,7 +9,6 @@ import { ProjectImpl } from '../../core/project/Project';
 
 export const PlayerCanvas = () => {
     const project = useProjectData();
-    const updateSource = useProjectStore(s => s.updateSource);
 
     // Derived State
     const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
@@ -101,91 +98,67 @@ export const PlayerCanvas = () => {
         let renderState;
         try {
             renderState = ProjectImpl.getRenderState(project, currentTimeMs);
-        } catch { return; }
+        } catch {
+            console.error('Failed to get render state');
+            return;
+        }
 
         if (!renderState.isActive || !renderState.screenSource) {
             // Not in an output window or no source, showing background only
             return;
         }
 
+        renderScreenLayer(ctx, renderState, playback.isPlaying, outputSize);
+        renderWebcamLayer(ctx, renderState, playback.isPlaying, outputSize);
+    };
+
+    const renderScreenLayer = (
+        ctx: CanvasRenderingContext2D,
+        renderState: any,
+        isPlaying: boolean,
+        outputSize: any
+    ) => {
         const source = renderState.screenSource;
-        const sourceId = source.id;
-        const video = internalVideoRefs.current[sourceId];
-        const recording = renderState.recording;
+        if (!source) return;
 
-        const paddingPercentage = 0;
-
+        const video = internalVideoRefs.current[source.id];
         if (video) {
-            // A. Sync Video Time
-            const desiredTimeS = renderState.sourceTimeMs / 1000;
+            syncVideo(video, renderState.sourceTimeMs / 1000, isPlaying);
+            drawScreen(ctx, video, renderState, outputSize);
+        }
+    };
 
-            // Allow playing past duration? Source logic usually clamps, but let's trust sourceTimeMs for now or clamp.
-            // HTMLVideoElement loops if loop is true, but here we control it.
+    const renderWebcamLayer = (
+        ctx: CanvasRenderingContext2D,
+        renderState: any,
+        isPlaying: boolean,
+        outputSize: any
+    ) => {
+        const source = renderState.cameraSource;
+        if (!source) return;
 
-            if (playback.isPlaying) {
-                if (video.paused) video.play().catch(() => { });
-                // We assume 1x speed for now as 'speed' was on Clip.
-                // If we want variable speed, we need it in Recording or OutputWindow?
-                // For now 1x.
-                if (Math.abs(video.currentTime - desiredTimeS) > 0.2) video.currentTime = desiredTimeS;
-            } else {
-                if (!video.paused) video.pause();
-                if (Math.abs(video.currentTime - desiredTimeS) > 0.001) video.currentTime = desiredTimeS;
-            }
+        const video = internalVideoRefs.current[source.id];
+        if (video) {
+            // Camera syncs to same time as screen source
+            syncVideo(video, renderState.sourceTimeMs / 1000, isPlaying);
 
-            // B. Draw
             const inputSize = video.videoWidth && video.videoHeight
                 ? { width: video.videoWidth, height: video.videoHeight }
                 : source.size;
 
             if (inputSize) {
-                // Viewport Motion (Source Space calculation)
-                const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
-                const viewportMotions = recording.viewportMotions || [];
-
-                // getViewportStateAtTime expects sourceTimeMs now
-                const effectiveViewport = getViewportStateAtTime(viewportMotions, renderState.sourceTimeMs, outputSize);
-
-                const renderRects = config.resolveRenderRects(effectiveViewport);
-
-                if (renderRects) {
-                    ctx.drawImage(
-                        video,
-                        renderRects.sourceRect.x, renderRects.sourceRect.y, renderRects.sourceRect.width, renderRects.sourceRect.height,
-                        renderRects.destRect.x, renderRects.destRect.y, renderRects.destRect.width, renderRects.destRect.height
-                    );
-                }
-
-                // Mouse Effects
-                if (recording.clickEvents || recording.dragEvents) {
-                    drawMouseEffects(ctx, recording, renderState.sourceTimeMs, effectiveViewport, config);
-                }
+                drawWebcam(ctx, video, outputSize, inputSize);
             }
         }
+    };
 
-        // Draw Webcam (PIP)
-        if (renderState.cameraSource && internalVideoRefs.current[renderState.cameraSource.id]) {
-            const camVideo = internalVideoRefs.current[renderState.cameraSource.id];
-            const camSource = renderState.cameraSource;
-            // Sync Camera video
-            // Assumption: Camera is always in sync with Screen Source (recorded together)
-            // So we use the same sourceTimeMs.
-            const desiredTimeS = renderState.sourceTimeMs / 1000;
-            if (playback.isPlaying) {
-                if (camVideo.paused) camVideo.play().catch(() => { });
-                if (Math.abs(camVideo.currentTime - desiredTimeS) > 0.2) camVideo.currentTime = desiredTimeS;
-            } else {
-                if (!camVideo.paused) camVideo.pause();
-                if (Math.abs(camVideo.currentTime - desiredTimeS) > 0.001) camVideo.currentTime = desiredTimeS;
-            }
-
-            const inputSize = camVideo.videoWidth && camVideo.videoHeight
-                ? { width: camVideo.videoWidth, height: camVideo.videoHeight }
-                : camSource.size;
-
-            if (inputSize) {
-                drawWebcam(ctx, camVideo, outputSize, inputSize);
-            }
+    const syncVideo = (video: HTMLVideoElement, desiredTimeS: number, isPlaying: boolean) => {
+        if (isPlaying) {
+            if (video.paused) video.play().catch(() => { });
+            if (Math.abs(video.currentTime - desiredTimeS) > 0.2) video.currentTime = desiredTimeS;
+        } else {
+            if (!video.paused) video.pause();
+            if (Math.abs(video.currentTime - desiredTimeS) > 0.001) video.currentTime = desiredTimeS;
         }
     };
 
@@ -199,19 +172,6 @@ export const PlayerCanvas = () => {
     }, [outputVideoSize.width, outputVideoSize.height]);
 
 
-    // Handle Metadata Load
-    const handleMetadata = (sourceId: string, e: React.SyntheticEvent<HTMLVideoElement>) => {
-        const video = e.currentTarget;
-        console.log(`[PlayerCanvas] Source Loaded: ${sourceId} (${video.videoWidth}x${video.videoHeight})`);
-
-        updateSource(sourceId, {
-            size: { width: video.videoWidth, height: video.videoHeight },
-            durationMs: video.duration * 1000,
-        });
-
-        renderPipeline();
-    };
-
     return (
         <>
             <div style={{ display: 'none' }}>
@@ -220,7 +180,6 @@ export const PlayerCanvas = () => {
                         ref={bgRef}
                         src={project.background.imageUrl}
                         alt="Background Asset"
-                        onLoad={() => renderPipeline()}
                     />
                 )}
 
@@ -233,7 +192,6 @@ export const PlayerCanvas = () => {
                                 else delete internalVideoRefs.current[source.id];
                             }}
                             src={source.url}
-                            onLoadedMetadata={(e) => handleMetadata(source.id, e)}
                             muted={false}
                             playsInline
                             crossOrigin="anonymous"

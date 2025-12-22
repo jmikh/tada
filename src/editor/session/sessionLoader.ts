@@ -1,4 +1,4 @@
-import type { UserEvent } from '../../core/types';
+import type { UserEvent, Size } from '../../core/types';
 
 export interface SessionData {
     videoUrl: string | null;
@@ -7,6 +7,9 @@ export interface SessionData {
     recordingStartTime?: number;
     recordingDuration?: number;
     recordingSyncTimestamp?: number; // Checkpoint when countdown finished
+    // 2 (Added)
+    dimensions?: Size;
+    cameraDimensions?: Size;
 }
 
 export async function loadSessionData(): Promise<SessionData> {
@@ -57,6 +60,9 @@ export async function loadSessionData(): Promise<SessionData> {
 
                         if (blobData.duration) result.recordingDuration = blobData.duration;
                         if (blobData.sessionId) currentSessionId = blobData.sessionId;
+                        if (blobData.duration) result.recordingDuration = blobData.duration;
+                        if (blobData.sessionId) currentSessionId = blobData.sessionId;
+                        if (blobData.dimensions) result.dimensions = blobData.dimensions;
                     }
 
                     // Get Camera
@@ -67,6 +73,7 @@ export async function loadSessionData(): Promise<SessionData> {
                             // Validate Session ID Match
                             if (currentSessionId && camData.sessionId === currentSessionId) {
                                 result.cameraUrl = URL.createObjectURL(camData.blob);
+                                if (camData.dimensions) result.cameraDimensions = camData.dimensions;
                             } else if (!currentSessionId) {
                                 // Fallback for legacy recordings (optional, or just ignore)
                                 // If we want to be strict: do not load.
@@ -78,6 +85,7 @@ export async function loadSessionData(): Promise<SessionData> {
                                 // Let's check matching start times as fallback if IDs missing?
                                 if (camData.startTime === result.recordingStartTime) {
                                     result.cameraUrl = URL.createObjectURL(camData.blob);
+                                    if (camData.dimensions) result.cameraDimensions = camData.dimensions;
                                 }
                             }
                         }
