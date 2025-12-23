@@ -19,6 +19,10 @@ export function drawDragEffects(
 ) {
     // Add a visual lag (trail) to the drag
     const DRAG_LAG_MS = 70;
+    const MOUSE_BASE_RADIUS = 60;
+
+    // Calculate current zoom scale
+    const zoomScale = viewMapper.getZoomScale(viewport);
 
     for (const drag of dragEvents) {
         if (drag.path.length === 0) continue;
@@ -34,13 +38,13 @@ export function drawDragEffects(
             const currentPoint = getPointAtTime(drag.path, positionTime);
             const screenPoint = viewMapper.projectToScreen(currentPoint, viewport);
 
-            // Simplified: Constant size and opacity
-            const maxRadius = 60;
+            // Scale radius by zoom level
+            const scaledRadius = MOUSE_BASE_RADIUS * zoomScale;
             const opacity = 0.3;
 
             // Draw Cursor Representative
             ctx.beginPath();
-            ctx.arc(screenPoint.x, screenPoint.y, maxRadius, 0, Math.PI * 2);
+            ctx.arc(screenPoint.x, screenPoint.y, scaledRadius, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(128, 128, 128, ${opacity})`;
             ctx.fill();
         }

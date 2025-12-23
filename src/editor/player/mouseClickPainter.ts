@@ -19,6 +19,10 @@ export function drawClickEffects(
 ) {
     // Show clicks that happened recently (e.g. within last 500ms)
     const CLICK_DURATION = 500;
+    const MOUSE_BASE_RADIUS = 60;
+
+    // Calculate current zoom scale
+    const zoomScale = viewMapper.getZoomScale(viewport);
 
     // Optimisation: We could binary search if sorted, but linear fits for small event counts
     for (const click of clickEvents) {
@@ -29,9 +33,9 @@ export function drawClickEffects(
             // Project Center (Input -> Screen)
             const center = viewMapper.projectToScreen(click, viewport);
 
-            // Draw Expanding Gray Circle
-            const maxRadius = 60; // px
-            const currentRadius = maxRadius * progress;
+            // Draw Expanding Expanding Circle
+            // Scale radius by zoom level
+            const currentRadius = MOUSE_BASE_RADIUS * zoomScale * progress;
             const opacity = 0.5 * (1 - progress);
 
             ctx.beginPath();

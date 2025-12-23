@@ -108,6 +108,16 @@ export class ViewMapper {
             y: (outputPoint.y - viewport.y) * scaleY
         };
     }
+
+    /**
+     * Returns the zoom scale factor relative to the Output Video Size.
+     * Scale 1.0 means the Viewport is exactly the Output Video Size.
+     * Scale 2.0 means the Viewport is half the Output Video Size (Zoomed In).
+     */
+    getZoomScale(viewport: Rect): number {
+        // We assume uniform scaling for zoom elements, so we use width ratio.
+        return this.outputVideoSize.width / viewport.width;
+    }
 }
 
 // Helper
