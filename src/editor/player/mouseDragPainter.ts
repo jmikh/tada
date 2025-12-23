@@ -17,8 +17,8 @@ export function drawDragEffects(
     viewport: Rect,
     viewMapper: ViewMapper
 ) {
-    // Add a visual lag (trail) to the drag
-    const DRAG_LAG_MS = 70;
+    // Add a visual lag (there is a mismatch between the drag events and the screen events)
+    const DRAG_LAG_MS = 80;
     const MOUSE_BASE_RADIUS = 60;
 
     // Calculate current zoom scale

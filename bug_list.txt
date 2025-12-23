@@ -1,2 +1,2 @@
 - looks like user events are being recorded before the recording starts which leads to early zoom
--
+- keyboard events "cmd + c" when in input field are omitted. needs fixing.
