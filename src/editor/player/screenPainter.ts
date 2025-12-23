@@ -1,9 +1,10 @@
 
 import type { Size } from '../../core/types';
 import type { RenderState } from '../../core/project/Project';
-import { ViewTransform } from '../../core/effects/viewTransform';
+import { ViewMapper } from '../../core/effects/viewMapper';
 import { getViewportStateAtTime } from '../../core/effects/viewportMotion';
-import { drawMouseEffects } from './mousePainter';
+import { drawClickEffects } from './mouseClickPainter';
+import { drawDragEffects } from './mouseDragPainter';
 
 /**
  * Draws the screen recording frame, applying viewport transformations and mouse effects.
@@ -27,7 +28,7 @@ export function drawScreen(
     const paddingPercentage = 0; // Configurable?
 
     // 1. Calculate Viewport (Output Space)
-    const config = new ViewTransform(inputSize, outputSize, paddingPercentage);
+    const viewMapper = new ViewMapper(inputSize, outputSize, paddingPercentage);
     const viewportMotions = recording.viewportMotions || [];
 
     // Calculate effective viewport using output time (gapless time)
@@ -38,7 +39,7 @@ export function drawScreen(
     const effectiveViewport = getViewportStateAtTime(viewportMotions, outputTimeMs, outputSize);
 
     // 2. Resolve render rectangles (Source -> Dest)
-    const renderRects = config.resolveRenderRects(effectiveViewport);
+    const renderRects = viewMapper.resolveRenderRects(effectiveViewport);
 
     if (renderRects) {
         ctx.drawImage(
@@ -49,7 +50,10 @@ export function drawScreen(
     }
 
     // 3. Draw Mouse Effects Overlay
-    if (recording.clickEvents || recording.dragEvents) {
-        drawMouseEffects(ctx, recording, sourceTimeMs, effectiveViewport, config);
+    if (recording.clickEvents) {
+        drawClickEffects(ctx, recording.clickEvents, sourceTimeMs, effectiveViewport, viewMapper);
+    }
+    if (recording.dragEvents) {
+        drawDragEffects(ctx, recording.dragEvents, sourceTimeMs, effectiveViewport, viewMapper);
     }
 }

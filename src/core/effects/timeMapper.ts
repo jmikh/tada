@@ -16,9 +16,7 @@ export function mapTimelineToOutputTime(timelineTimeMs: number, windows: OutputW
             return outputTimeAccumulator + (timelineTimeMs - win.startMs);
         } else if (timelineTimeMs < win.startMs) {
             // Before this window (gap)
-            // If we strictly want valid output time, we might return the start of this window or -1?
-            // "Gapless" logic usually implies we clamp or ignore. 
-            // Better behavior: return -1 to indicate "not visible".
+            // return -1 to indicate "not visible".
             return -1;
         }
 

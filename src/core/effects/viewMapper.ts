@@ -1,8 +1,7 @@
 import type { Size, Point, Rect } from '../types.ts';
 
 
-
-export class ViewTransform {
+export class ViewMapper {
     inputVideoSize: Size;
     outputVideoSize: Size;
     paddingPercentage: number;

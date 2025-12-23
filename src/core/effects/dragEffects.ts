@@ -1,18 +1,13 @@
-import type { UserEvent, ClickEvent, DragEvent } from '../types';
+import type { UserEvent, DragEvent } from '../types';
 
-export function generateRecordingEvents(
+export function calculateDragEvents(
     events: UserEvent[]
-): { clickEvents: ClickEvent[], dragEvents: DragEvent[] } {
-    const clickEvents: ClickEvent[] = [];
+): DragEvent[] {
     const dragEvents: DragEvent[] = [];
 
-    if (!events || events.length === 0) return { clickEvents, dragEvents };
+    if (!events || events.length === 0) return dragEvents;
 
-    // 1. Clicks are direct pass-through (assuming source events are already cleaned/typed)
-    // We explicitly cast or filter.
-    clickEvents.push(...events.filter(e => e.type === 'click') as ClickEvent[]);
-
-    // 2. Identify Drags (mousedown -> moves -> mouseup)
+    // Identify Drags (mousedown -> moves -> mouseup)
     let activeDrag: DragEvent | null = null;
 
     // Events are assumed to be sorted by timestamp
@@ -46,7 +41,7 @@ export function generateRecordingEvents(
         dragEvents.push(activeDrag);
     }
 
-    return { clickEvents, dragEvents };
+    return dragEvents;
 }
 
 

@@ -14,9 +14,10 @@ import { ProjectImpl } from '../core/project/Project';
 // import { TrackImpl } from '../core/timeline/Track'; // REMOVED
 // import { ClipImpl } from '../core/timeline/Clip'; // REMOVED
 import type { Source, OutputWindow } from '../core/types';
-import { ViewTransform } from '../core/effects/viewTransform';
+import { ViewMapper } from '../core/effects/viewMapper';
 import { calculateZoomSchedule } from '../core/effects/viewportMotion';
-import { generateRecordingEvents } from '../core/effects/mouseEffects';
+import { calculateDragEvents } from '../core/effects/dragEffects';
+import type { ClickEvent } from '../core/types';
 
 
 
@@ -111,13 +112,14 @@ function Editor() {
             const source = proj.sources[screenSourceId];
 
             // Extract Events
-            let clickEvents: any[] = [];
+            let clickEvents: ClickEvent[] = [];
             let dragEvents: any[] = [];
 
             if (source.events && source.events.length > 0) {
-                const extracted = generateRecordingEvents(source.events);
-                clickEvents = extracted.clickEvents;
-                dragEvents = extracted.dragEvents;
+                // Manually filter clicks
+                clickEvents = source.events.filter(e => e.type === 'click') as ClickEvent[];
+                // Refactored drag calculation
+                dragEvents = calculateDragEvents(source.events);
             }
 
             // 2. Prepare Output Windows (if none exist, create default for calculation & store)
@@ -140,11 +142,11 @@ function Editor() {
 
             if (source.size && proj.zoom.auto) {
                 console.log('[AppDebug] Calculating Zoom Schedule. Events:', source.events?.length);
-                const transform = new ViewTransform(source.size, proj.outputSettings.size, 0);
+                const viewMapper = new ViewMapper(source.size, proj.outputSettings.size, 0);
                 // Use source.events (raw) which contains clicks/moves
                 viewportMotions = calculateZoomSchedule(
                     proj.zoom.maxZoom,
-                    transform,
+                    viewMapper,
                     source.events || [],
                     currentWindows,
                     timeline.recording.timelineOffsetMs

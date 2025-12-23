@@ -1,7 +1,7 @@
 import type { UserEvent, ViewportMotion, Size, MouseEvent, Rect } from '../types.ts';
-import { ViewTransform } from './viewTransform.ts';
+import { ViewMapper } from './viewMapper.ts';
 
-export * from './viewTransform.ts';
+export * from './viewMapper.ts';
 
 // ============================================================================
 // Core Abstractions
@@ -101,7 +101,7 @@ import type { OutputWindow } from '../types';
 
 export function calculateZoomSchedule(
     maxZoom: number,
-    viewTransform: ViewTransform,
+    viewMapper: ViewMapper,
     events: UserEvent[],
     outputWindows: OutputWindow[],
     timelineOffsetMs: number
@@ -141,7 +141,7 @@ export function calculateZoomSchedule(
     // 2. Detect Hovers in Output Space
     // Now that events are in continuous Output Time, findHoverEvents will correctly 
     // detect hovers even across cuts if the mouse position is stable.
-    const hoverEvents = findHoverEvents(mappedEvents as UserEvent[], viewTransform.inputVideoSize);
+    const hoverEvents = findHoverEvents(mappedEvents as UserEvent[], viewMapper.inputVideoSize);
 
     // 3. Merge Clicks and Hovers
     // Both are now already in Output Time.
@@ -153,8 +153,8 @@ export function calculateZoomSchedule(
     console.log('[ZoomDebug] Relevant events (Output Time):', relevantEvents.length);
 
     const zoomLevel = maxZoom;
-    const targetWidth = viewTransform.outputVideoSize.width / zoomLevel;
-    const targetHeight = viewTransform.outputVideoSize.height / zoomLevel;
+    const targetWidth = viewMapper.outputVideoSize.width / zoomLevel;
+    const targetHeight = viewMapper.outputVideoSize.height / zoomLevel;
 
     const ZOOM_HOLD_DURATION = 2000;
     const ZOOM_TRANSITION_DURATION = 500;
@@ -164,14 +164,14 @@ export function calculateZoomSchedule(
         const arrivalTime = evt.timestamp; // Already Output Time
 
         // Map Click to Output Space (Viewport)
-        const clickOutput = viewTransform.inputToOutput({ x: evt.x, y: evt.y });
+        const clickOutput = viewMapper.inputToOutput({ x: evt.x, y: evt.y });
 
         // Center Viewport
         let viewportX = clickOutput.x - targetWidth / 2;
         let viewportY = clickOutput.y - targetHeight / 2;
 
-        const maxX = viewTransform.outputVideoSize.width - targetWidth;
-        const maxY = viewTransform.outputVideoSize.height - targetHeight;
+        const maxX = viewMapper.outputVideoSize.width - targetWidth;
+        const maxY = viewMapper.outputVideoSize.height - targetHeight;
 
         if (viewportX < 0) viewportX = 0;
         else if (viewportX > maxX) viewportX = maxX;
@@ -203,8 +203,8 @@ export function calculateZoomSchedule(
             // Zoom out to full view
             const fullView: Rect = {
                 x: 0, y: 0,
-                width: viewTransform.outputVideoSize.width,
-                height: viewTransform.outputVideoSize.height
+                width: viewMapper.outputVideoSize.width,
+                height: viewMapper.outputVideoSize.height
             };
 
             const zoomOutStart = Math.max(arrivalTime + 1000, arrivalTime + 500);

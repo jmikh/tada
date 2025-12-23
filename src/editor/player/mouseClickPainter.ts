@@ -1,0 +1,43 @@
+import type { ClickEvent, Rect } from '../../core/types';
+import type { ViewMapper } from '../../core/effects/viewMapper';
+
+/**
+ * Draws click effects.
+ *
+ * @param ctx 2D Canvas Context
+ * @param clickEvents List of click events
+ * @param sourceTimeMs Current Source Time
+ * @param viewport Current Viewport (Output Space)
+ * @param viewMapper Transformation Wrapper
+ */
+export function drawClickEffects(
+    ctx: CanvasRenderingContext2D,
+    clickEvents: ClickEvent[],
+    sourceTimeMs: number,
+    viewport: Rect,
+    viewMapper: ViewMapper
+) {
+    // Show clicks that happened recently (e.g. within last 500ms)
+    const CLICK_DURATION = 500;
+
+    // Optimisation: We could binary search if sorted, but linear fits for small event counts
+    for (const click of clickEvents) {
+        if (sourceTimeMs >= click.timestamp && sourceTimeMs <= click.timestamp + CLICK_DURATION) {
+            const elapsed = sourceTimeMs - click.timestamp;
+            const progress = elapsed / CLICK_DURATION;
+
+            // Project Center (Input -> Screen)
+            const center = viewMapper.projectToScreen(click, viewport);
+
+            // Draw Expanding Gray Circle
+            const maxRadius = 60; // px
+            const currentRadius = maxRadius * progress;
+            const opacity = 0.5 * (1 - progress);
+
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, currentRadius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(128, 128, 128, ${opacity})`;
+            ctx.fill();
+        }
+    }
+}
