@@ -127,7 +127,8 @@ export function calculateZoomSchedule(
 
     for (const evt of events) {
         const outputTime = mapSourceToOutputTime(evt.timestamp, outputWindows, timelineOffsetMs);
-        if (outputTime !== -1) {
+        if (outputTime !== -1 && outputTime > 2000) {
+            // don't zoom until 2 seconds in
             // Clone and update timestamp to Output Time
             // We preserve originalTimestamp just in case, though not strictly needed for logic
             const mapped = { ...evt, timestamp: outputTime, originalTimestamp: evt.timestamp };

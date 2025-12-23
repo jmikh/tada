@@ -264,22 +264,43 @@ window.addEventListener('keydown', (e) => {
     if (!chrome.runtime?.id) return;
 
     const target = e.target as HTMLElement;
-    // TODO: We might need to revisit this logic in the future
-    const isInput = (target.isContentEditable && target.tagName === 'INPUT') || target.tagName === 'TEXTAREA';
 
+    // Robust Input Detection
+    const tagName = target.tagName;
+    const isContentEditable = target.isContentEditable;
+    // const isInputTag = tagName === 'INPUT' || tagName === 'TEXTAREA';
+
+    // We treat standard inputs as 'Input' unless they are non-text types (like checkbox/radio)
+    // Note: checking 'type' effectively for INPUT
+    let isInput = isContentEditable || tagName === 'TEXTAREA';
+    if (tagName === 'INPUT') {
+        const type = (target as HTMLInputElement).type;
+        // List of inputs that act more like buttons/toggles than text entry
+        const nonTextInputs = ['checkbox', 'radio', 'button', 'image', 'submit', 'reset', 'range', 'color'];
+        if (!nonTextInputs.includes(type)) {
+            isInput = true;
+        }
+    }
 
     // Ignore standalone modifier keys (we only care about the combo)
     if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
 
-    // If in input, only capture Modifiers or Special keys (Enter/Tab/Esc)
-    // If NOT in input, capture everything (for tool shortcuts like Figma 'v', 'r')
+    // Filter Logic:
+    // 1. If NOT in input: Capture Everything (shortcuts, navigation, etc)
+    // 2. If IN input:
+    //    - Capture 'Modifier' combos (Cmd+C, Ctrl+Z, etc)
+    //    - Capture 'Special' keys (Enter, Esc, Tab)
+    //    - IGNORE typing (Shift+c, a, etc)
 
     const isModifier = e.ctrlKey || e.metaKey || e.altKey;
-    const isSpecial = ['Enter', 'Tab', 'Escape', 'Backspace'].includes(e.key);
+    // We explicitly exclude arrow keys in inputs to reduce noise, unless user wants them.
+    // User asked for "modifier key strokes... and definitely dont want... letter being input"
+    // We include navigation keys if needed, but for now lets stick to "Special" functional keys.
+    const isSpecial = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete'].includes(e.key);
 
     const shouldCapture = !isInput || (isInput && (isModifier || isSpecial));
 
-    console.log(`[Content] Keydown: ${e.key} | Target=${target.tagName} | isInput=${isInput} | isModifier=${isModifier} | isSpecial=${isSpecial} | Capture=${shouldCapture}`);
+    // console.log(`[Content] Keydown: ${e.key} | Input=${isInput} | Mod=${isModifier} | Capture=${shouldCapture}`);
 
     if (shouldCapture) {
         sendMessageToBackground('KEYDOWN', {
@@ -295,7 +316,7 @@ window.addEventListener('keydown', (e) => {
             isSpecial,
         });
     }
-});
+}, true); // Use Capture Phase to ensure we get events before site stops propagation
 
 // Scroll Capture
 let lastScrollTime = 0;
