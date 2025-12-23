@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import type { Size } from '../core/types';
+import type { Size, UserEvent, DragEvent } from '../core/types';
 
 logger.log("Background service worker running");
 
@@ -242,6 +242,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // Sort events by timestamp to ensure chronological order (buffered events might arrive late)
         state.events.sort((a, b) => a.timestamp - b.timestamp);
 
+        // Calculate Drag Events from raw mouse events
+        const dragEvents = calculateDragEvents(state.events as UserEvent[]);
+        state.events.push(...dragEvents);
+
+        state.events.sort((a, b) => a.timestamp - b.timestamp);
+
         logger.log("[Background] Saving final events:", state.events.length);
         chrome.storage.local.set({ recordingMetadata: state.events });
 
@@ -256,3 +262,41 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         chrome.tabs.create({ url: message.url });
     }
 });
+
+function calculateDragEvents(events: UserEvent[]): DragEvent[] {
+    const dragEvents: DragEvent[] = [];
+
+    if (!events || events.length === 0) return dragEvents;
+
+    // Identify Drags (mousedown -> moves -> mouseup)
+    let activeDrag: DragEvent | null = null;
+
+    for (const evt of events) {
+        if (evt.type === 'mousedown') {
+            if (activeDrag) {
+                // Unexpected mousedown while dragging? Ignore or reset?
+                continue;
+            }
+            activeDrag = {
+                timestamp: evt.timestamp,
+                type: 'drag',
+                path: [{ timestamp: evt.timestamp, x: evt.x, y: evt.y }]
+            };
+        } else if (evt.type === 'mouse' && activeDrag) {
+            // Mouse move during drag
+            activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
+        } else if (evt.type === 'mouseup' && activeDrag) {
+            // End Drag
+            activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
+            dragEvents.push(activeDrag);
+            activeDrag = null;
+        }
+    }
+
+    // Close any trailing drag
+    if (activeDrag) {
+        dragEvents.push(activeDrag);
+    }
+
+    return dragEvents;
+}
