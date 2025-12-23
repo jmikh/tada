@@ -1,0 +1,2 @@
+- looks like user events are being recorded before the recording starts which leads to early zoom
+-

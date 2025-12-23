@@ -142,7 +142,7 @@ function Editor() {
 
             if (source.size && proj.zoom.auto) {
                 console.log('[AppDebug] Calculating Zoom Schedule. Events:', source.events?.length);
-                const viewMapper = new ViewMapper(source.size, proj.outputSettings.size, 0);
+                const viewMapper = new ViewMapper(source.size, proj.outputSettings.size, proj.background.padding ?? 0.1);
                 // Use source.events (raw) which contains clicks/moves
                 viewportMotions = calculateZoomSchedule(
                     proj.zoom.maxZoom,

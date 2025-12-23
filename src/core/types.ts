@@ -221,5 +221,7 @@ export interface BackgroundSettings {
     type: BackgroundType;
     color?: string; // Hex code, e.g. #FFFFFF
     imageUrl?: string; // Path to image (e.g. /assets/backgrounds/foo.jpg)
+    /** Scale padding percentage (0 to 0.5). Default 0.1 (10%) */
+    padding?: number;
 }
 

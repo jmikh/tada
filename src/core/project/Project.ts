@@ -52,7 +52,8 @@ export class ProjectImpl {
             },
             background: {
                 type: 'solid',
-                color: '#1e1e1e'
+                color: '#1e1e1e',
+                padding: 0.1
             }
         };
     }

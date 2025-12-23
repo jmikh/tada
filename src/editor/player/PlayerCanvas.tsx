@@ -115,7 +115,7 @@ export const PlayerCanvas = () => {
             const video = internalVideoRefs.current[source.id];
             if (video) {
                 syncVideo(video, renderState.sourceTimeMs / 1000, playback.isPlaying);
-                drawScreen(ctx, video, renderState, outputSize);
+                drawScreen(ctx, video, renderState, outputSize, project.background.padding ?? 0.1);
             } else {
                 console.error(`[PlayerCanvas] Missing video element for screen source: ${source.id}`);
             }

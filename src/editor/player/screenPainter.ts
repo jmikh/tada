@@ -13,7 +13,8 @@ export function drawScreen(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
     renderState: RenderState,
-    outputSize: Size
+    outputSize: Size,
+    padding: number
 ) {
     const { screenSource, recording, sourceTimeMs } = renderState;
     if (!screenSource) return;
@@ -25,7 +26,7 @@ export function drawScreen(
 
     if (!inputSize) return;
 
-    const paddingPercentage = 0; // Configurable?
+    const paddingPercentage = padding;
 
     // 1. Calculate Viewport (Output Space)
     const viewMapper = new ViewMapper(inputSize, outputSize, paddingPercentage);
