@@ -156,7 +156,6 @@ export function calculateZoomSchedule(
     const targetWidth = viewMapper.outputVideoSize.width / zoomLevel;
     const targetHeight = viewMapper.outputVideoSize.height / zoomLevel;
 
-    const ZOOM_HOLD_DURATION = 2000;
     const ZOOM_TRANSITION_DURATION = 500;
 
     for (let i = 0; i < relevantEvents.length; i++) {
@@ -186,34 +185,33 @@ export function calculateZoomSchedule(
             height: targetHeight
         };
 
-        motions.push({
-            endTimeMs: arrivalTime,
-            durationMs: ZOOM_TRANSITION_DURATION,
-            rect: newViewport
-        });
+        const startTime = arrivalTime - ZOOM_TRANSITION_DURATION;
+        const lastMotion = motions.length > 0 ? motions[motions.length - 1] : null;
 
-        // Hold and Zoom Out Logic
-        // Check if next event is close (in Output Time)
-        const nextEvt = relevantEvents[i + 1];
-        const holdUntil = arrivalTime + ZOOM_HOLD_DURATION;
+        if (lastMotion && startTime < lastMotion.endTimeMs) {
+            // Merge with last motion
+            // New Start is the start of the last motion (since events are sorted, last motion starts earlier)
+            const lastMotionStart = lastMotion.endTimeMs - lastMotion.durationMs;
+            const newDuration = arrivalTime - lastMotionStart;
 
-        if (nextEvt && (nextEvt as any).timestamp < holdUntil + ZOOM_TRANSITION_DURATION * 2) {
-            // Stay zoomed
-        } else {
-            // Zoom out to full view
-            const fullView: Rect = {
-                x: 0, y: 0,
-                width: viewMapper.outputVideoSize.width,
-                height: viewMapper.outputVideoSize.height
+            // Calculate combined viewport using helper
+            const combinedRect = getCombinedViewport(
+                lastMotion.rect,
+                newViewport,
+                viewMapper.outputVideoSize
+            );
+
+            // Update last motion
+            motions[motions.length - 1] = {
+                endTimeMs: arrivalTime,
+                durationMs: newDuration,
+                rect: combinedRect
             };
-
-            const zoomOutStart = Math.max(arrivalTime + 1000, arrivalTime + 500);
-            const zoomOutEnd = zoomOutStart + ZOOM_TRANSITION_DURATION;
-
+        } else {
             motions.push({
-                endTimeMs: zoomOutEnd,
+                endTimeMs: arrivalTime,
                 durationMs: ZOOM_TRANSITION_DURATION,
-                rect: fullView
+                rect: newViewport
             });
         }
     }
@@ -281,3 +279,86 @@ function interpolateRect(from: Rect, to: Rect, t: number): Rect {
         height: from.height + (to.height - from.height) * t,
     };
 }
+
+function getUnionRect(r1: Rect, r2: Rect): Rect {
+    const minX = Math.min(r1.x, r2.x);
+    const minY = Math.min(r1.y, r2.y);
+    const maxX = Math.max(r1.x + r1.width, r2.x + r2.width);
+    const maxY = Math.max(r1.y + r1.height, r2.y + r2.height);
+
+    return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY
+    };
+}
+
+function enforceAspectRatio(rect: Rect, targetRatio: number): Rect {
+    const currentRatio = rect.width / rect.height;
+    let newWidth = rect.width;
+    let newHeight = rect.height;
+
+    if (currentRatio > targetRatio) {
+        // Too wide, increase height to match target ratio
+        // width / height = target => height = width / target
+        newHeight = newWidth / targetRatio;
+    } else {
+        // Too tall (or equal), increase width to match target ratio
+        // width / height = target => width = height * target
+        newWidth = newHeight * targetRatio;
+    }
+
+    // Centered expansion
+    const newX = rect.x - (newWidth - rect.width) / 2;
+    const newY = rect.y - (newHeight - rect.height) / 2;
+
+    return { x: newX, y: newY, width: newWidth, height: newHeight };
+}
+
+/**
+ * Calculates a merged viewport that contains both provided rectangles,
+ * enforces the target aspect ratio, and clamps to the maximum bounds.
+ */
+function getCombinedViewport(
+    r1: Rect,
+    r2: Rect,
+    maxBounds: Size
+): Rect {
+    // 1. Calculate the Union Rectangle
+    // This gives us the smallest box that contains both viewports
+    let combined = getUnionRect(r1, r2);
+
+    // 2. Enforce Aspect Ratio
+    // We expand the rectangle to match the target Aspect Ratio.
+    // This ensures that the zoomed-out view still fills the screen properly without stretching/skewing.
+    const targetAspectRatio = maxBounds.width / maxBounds.height;
+    combined = enforceAspectRatio(combined, targetAspectRatio);
+
+    // 3. Clamp to Output Bounds
+    // Ensure the viewport doesn't go outside the video canvas.
+    // If the combined viewport is larger than the full video (less than 1x zoom),
+    // we fallback to the full video size (1x zoom).
+    if (combined.width > maxBounds.width || combined.height > maxBounds.height) {
+        return {
+            x: 0,
+            y: 0,
+            width: maxBounds.width,
+            height: maxBounds.height
+        };
+    }
+
+    // Otherwise, shift to keep within bounds (e.g. if expansion pushed top/left < 0)
+    if (combined.x < 0) combined.x = 0;
+    if (combined.y < 0) combined.y = 0;
+
+    if (combined.x + combined.width > maxBounds.width) {
+        combined.x = maxBounds.width - combined.width;
+    }
+    if (combined.y + combined.height > maxBounds.height) {
+        combined.y = maxBounds.height - combined.height;
+    }
+
+    return combined;
+}
+
