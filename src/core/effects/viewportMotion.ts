@@ -163,11 +163,11 @@ export function calculateZoomSchedule(
         const arrivalTime = evt.timestamp; // Already Output Time
 
         // Map Click to Output Space (Viewport)
-        const clickOutput = viewMapper.inputToOutput({ x: evt.x, y: evt.y });
+        const centerOutput = viewMapper.inputToOutput({ x: evt.x, y: evt.y });
 
         // Center Viewport
-        let viewportX = clickOutput.x - targetWidth / 2;
-        let viewportY = clickOutput.y - targetHeight / 2;
+        let viewportX = centerOutput.x - targetWidth / 2;
+        let viewportY = centerOutput.y - targetHeight / 2;
 
         const maxX = viewMapper.outputVideoSize.width - targetWidth;
         const maxY = viewMapper.outputVideoSize.height - targetHeight;
@@ -185,35 +185,36 @@ export function calculateZoomSchedule(
             height: targetHeight
         };
 
-        const startTime = arrivalTime - ZOOM_TRANSITION_DURATION;
         const lastMotion = motions.length > 0 ? motions[motions.length - 1] : null;
+        let duration = ZOOM_TRANSITION_DURATION;
 
-        if (lastMotion && startTime < lastMotion.endTimeMs) {
-            // Merge with last motion
-            // New Start is the start of the last motion (since events are sorted, last motion starts earlier)
-            const lastMotionStart = lastMotion.endTimeMs - lastMotion.durationMs;
-            const newDuration = arrivalTime - lastMotionStart;
+        if (lastMotion) {
+            // Optimization: If the new center is very close to the last center, don't move.
+            // "Close enough" = within 25% of width in delta x and within 25% in height in delta y.
+            const lastRect = lastMotion.rect;
+            const lastCenterX = lastRect.x + lastRect.width / 2;
+            const lastCenterY = lastRect.y + lastRect.height / 2;
 
-            // Calculate combined viewport using helper
-            const combinedRect = getCombinedViewport(
-                lastMotion.rect,
-                newViewport,
-                viewMapper.outputVideoSize
-            );
+            const dx = Math.abs(centerOutput.x - lastCenterX);
+            const dy = Math.abs(centerOutput.y - lastCenterY);
 
-            // Update last motion
-            motions[motions.length - 1] = {
-                endTimeMs: arrivalTime,
-                durationMs: newDuration,
-                rect: combinedRect
-            };
-        } else {
-            motions.push({
-                endTimeMs: arrivalTime,
-                durationMs: ZOOM_TRANSITION_DURATION,
-                rect: newViewport
-            });
+            if (dx < lastRect.width * 0.25 && dy < lastRect.height * 0.25) {
+                continue;
+            }
+
+            // Check if we have enough time for a full transition
+            const availableTime = arrivalTime - lastMotion.endTimeMs;
+            if (availableTime < ZOOM_TRANSITION_DURATION) {
+                // Shorten duration to avoid overlap
+                duration = Math.max(0, availableTime);
+            }
         }
+
+        motions.push({
+            endTimeMs: arrivalTime,
+            durationMs: duration,
+            rect: newViewport
+        });
     }
 
     return motions;
@@ -279,86 +280,3 @@ function interpolateRect(from: Rect, to: Rect, t: number): Rect {
         height: from.height + (to.height - from.height) * t,
     };
 }
-
-function getUnionRect(r1: Rect, r2: Rect): Rect {
-    const minX = Math.min(r1.x, r2.x);
-    const minY = Math.min(r1.y, r2.y);
-    const maxX = Math.max(r1.x + r1.width, r2.x + r2.width);
-    const maxY = Math.max(r1.y + r1.height, r2.y + r2.height);
-
-    return {
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY
-    };
-}
-
-function enforceAspectRatio(rect: Rect, targetRatio: number): Rect {
-    const currentRatio = rect.width / rect.height;
-    let newWidth = rect.width;
-    let newHeight = rect.height;
-
-    if (currentRatio > targetRatio) {
-        // Too wide, increase height to match target ratio
-        // width / height = target => height = width / target
-        newHeight = newWidth / targetRatio;
-    } else {
-        // Too tall (or equal), increase width to match target ratio
-        // width / height = target => width = height * target
-        newWidth = newHeight * targetRatio;
-    }
-
-    // Centered expansion
-    const newX = rect.x - (newWidth - rect.width) / 2;
-    const newY = rect.y - (newHeight - rect.height) / 2;
-
-    return { x: newX, y: newY, width: newWidth, height: newHeight };
-}
-
-/**
- * Calculates a merged viewport that contains both provided rectangles,
- * enforces the target aspect ratio, and clamps to the maximum bounds.
- */
-function getCombinedViewport(
-    r1: Rect,
-    r2: Rect,
-    maxBounds: Size
-): Rect {
-    // 1. Calculate the Union Rectangle
-    // This gives us the smallest box that contains both viewports
-    let combined = getUnionRect(r1, r2);
-
-    // 2. Enforce Aspect Ratio
-    // We expand the rectangle to match the target Aspect Ratio.
-    // This ensures that the zoomed-out view still fills the screen properly without stretching/skewing.
-    const targetAspectRatio = maxBounds.width / maxBounds.height;
-    combined = enforceAspectRatio(combined, targetAspectRatio);
-
-    // 3. Clamp to Output Bounds
-    // Ensure the viewport doesn't go outside the video canvas.
-    // If the combined viewport is larger than the full video (less than 1x zoom),
-    // we fallback to the full video size (1x zoom).
-    if (combined.width > maxBounds.width || combined.height > maxBounds.height) {
-        return {
-            x: 0,
-            y: 0,
-            width: maxBounds.width,
-            height: maxBounds.height
-        };
-    }
-
-    // Otherwise, shift to keep within bounds (e.g. if expansion pushed top/left < 0)
-    if (combined.x < 0) combined.x = 0;
-    if (combined.y < 0) combined.y = 0;
-
-    if (combined.x + combined.width > maxBounds.width) {
-        combined.x = maxBounds.width - combined.width;
-    }
-    if (combined.y + combined.height > maxBounds.height) {
-        combined.y = maxBounds.height - combined.height;
-    }
-
-    return combined;
-}
-
