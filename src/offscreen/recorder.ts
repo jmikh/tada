@@ -154,7 +154,8 @@ chrome.runtime.onMessage.addListener(async (message) => {
         chrome.runtime.sendMessage({ type: 'RECORDING_STARTED', startTime });
 
     } else if (message.type === 'STOP_RECORDING_OFFSCREEN') {
-        stopRecording();
+        const events = message.events || [];
+        stopRecording(events);
     } else if (message.type === 'PING_OFFSCREEN') {
         return Promise.resolve("PONG");
     }
@@ -172,7 +173,7 @@ function cleanup() {
     // Do not clear data here, we need to save it first
 }
 
-async function stopRecording() {
+async function stopRecording(events: any[]) {
     // 1. Stop Recorders
     const promises = [];
 
@@ -232,8 +233,8 @@ async function stopRecording() {
         // Save Blob
         await saveToIndexedDB('recording', blobId, blob, duration, projectId, screenDimensions);
 
+
         // Save Source Metadata
-        // Note: Events are currently empty here. They might be populated by the Editor from chrome.storage
         const source = {
             id: sourceId,
             type: 'video',
@@ -241,7 +242,7 @@ async function stopRecording() {
             durationMs: duration,
             size: screenDimensions || { width: 1920, height: 1080 },
             hasAudio: true,
-            events: [],
+            events: events,
             createdAt: now
         };
         await saveToIndexedDB('source', sourceId, source, duration, projectId);

@@ -239,27 +239,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         })();
         return true; // Keep channel open
     } else if (message.type === 'STOP_RECORDING') {
-        chrome.runtime.sendMessage({ type: 'STOP_RECORDING_OFFSCREEN' });
-        state.isRecording = false;
-
-        // Notify all tabs (or just active)
-        chrome.tabs.query({}, (tabs) => {
-            tabs.forEach(tab => {
-                if (tab.id) {
-                    chrome.tabs.sendMessage(tab.id, { type: 'RECORDING_STATUS_CHANGED', isRecording: false })
-                        .catch(() => {
-                            // Ignore errors for tabs without content script
-                        });
-                }
-            });
-        });
-
-        // No post-processing needed as content script handles click/drag details
         // Sort events by timestamp to ensure chronological order (buffered events might arrive late)
         state.events.sort((a, b) => a.timestamp - b.timestamp);
 
         logger.log("[Background] Saving final events:", state.events.length);
         chrome.storage.local.set({ recordingMetadata: state.events });
+
+        chrome.runtime.sendMessage({
+            type: 'STOP_RECORDING_OFFSCREEN',
+            events: state.events
+        });
+        state.isRecording = false;
 
         sendResponse({ success: true });
     } else if (message.type === 'OPEN_EDITOR') {

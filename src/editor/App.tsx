@@ -7,9 +7,6 @@ import { EventInspector } from './EventInspector';
 import { HoverInspector } from './HoverInspector';
 import { ProjectLibrary } from '../core/project/ProjectLibrary';
 
-// Legacy event merging helpers (to be refactored into ProjectLibrary eventually)
-import { calculateDragEvents } from '../core/effects/dragEffects';
-import type { ClickEvent, KeyboardEvent, UserEvent } from '../core/types';
 
 
 function Editor() {
@@ -36,47 +33,9 @@ function Editor() {
                 setIsLoading(false);
                 return;
             }
-
             try {
                 console.log('Initializing Project:', projectId);
                 const loadedProject = await ProjectLibrary.initProject(projectId);
-
-                // --- METADATA HYDRATION (Legacy/Gap Fill) ---
-                // If the project was just created from Source, and Source has no events (because Recorder didn't capture them),
-                // we try to load them from chrome.storage.local (where Content Script put them).
-                // This is a temporary bridge until Recorder captures events directly.
-
-                const screenSourceId = loadedProject.timeline.recording.screenSourceId;
-                const source = loadedProject.sources[screenSourceId];
-
-                // Only merge if we don't have events yet
-                if (source && (!source.events || source.events.length === 0)) {
-                    console.log('Checking chrome.storage for metadata events...');
-                    const storage = await chrome.storage.local.get(['recordingMetadata']);
-                    const events = storage.recordingMetadata as UserEvent[];
-
-                    if (events && events.length > 0) {
-                        console.log(`Hydrating project with ${events.length} events from storage.`);
-                        // We need to update the Project (and potentially the Source in IDB?)
-                        // For now, just update the loaded project instance so the user can work.
-                        // The "Save Project" action will persist these into the Project's recording events.
-                        // Note: We are NOT updating the immutable Source in IDB here. That's fine.
-
-                        // Parse events into Recording buckets
-                        const clickEvents = events.filter(e => e.type === 'click') as ClickEvent[];
-                        // @ts-ignore
-                        const keyboardEvents = events.filter(e => e.type === 'keydown') as KeyboardEvent[];
-                        const dragEvents = calculateDragEvents(events);
-
-                        loadedProject.timeline.recording.clickEvents = clickEvents;
-                        loadedProject.timeline.recording.keyboardEvents = keyboardEvents;
-                        loadedProject.timeline.recording.dragEvents = dragEvents;
-
-                        // Update Source (in memory) for inspectors
-                        source.events = events;
-                    }
-                }
-
                 loadProject(loadedProject);
             } catch (err: any) {
                 console.error("Project Init Failed:", err);
@@ -105,7 +64,7 @@ function Editor() {
 
     // Derived UI State
     const hasActiveProject = Object.keys(project.sources).length > 0;
-    const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
+    const outputVideoSize = project?.outputSettings.size;
     // TODO: support multi-source better
     const firstSource = Object.values(project.sources || {})[0];
     const inputVideoSize = firstSource?.size || null;
@@ -130,37 +89,6 @@ function Editor() {
             height: rh
         };
     }
-
-    // Tooltip Logic
-    const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
-
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!inputVideoSize || !inputVideoSize.width || Object.keys(renderedStyle).length === 0) return;
-
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        const rw = (renderedStyle as any).width;
-        const rh = (renderedStyle as any).height;
-
-        const scaleX = rw / inputVideoSize.width;
-        const scaleY = rh / inputVideoSize.height;
-
-        const sx = x / scaleX;
-        const sy = y / scaleY;
-
-        setTooltip({
-            x: e.clientX + 15,
-            y: e.clientY + 15,
-            text: `X: ${Math.round(sx)}, Y: ${Math.round(sy)}`
-        });
-    };
-
-    const handleMouseLeave = () => {
-        setTooltip(null);
-    };
-
 
     if (error) {
         return (
@@ -205,33 +133,12 @@ function Editor() {
                             <div
                                 className="bg-blue-200"
                                 style={{ position: 'relative', ...renderedStyle }}
-                                onMouseMove={handleMouseMove}
-                                onMouseLeave={handleMouseLeave}
                             >
                                 <PlayerCanvas />
                             </div>
                         )}
                         {isLoading && <div className="text-white">Loading Project...</div>}
                     </div>
-
-                    {/* Tooltip */}
-                    {tooltip && (
-                        <div style={{
-                            position: 'fixed',
-                            left: tooltip.x + 10,
-                            top: tooltip.y + 10,
-                            zIndex: 9999,
-                            background: 'rgba(0, 0, 0, 0.8)',
-                            color: 'white',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            pointerEvents: 'none',
-                            whiteSpace: 'nowrap'
-                        }}>
-                            {tooltip.text}
-                        </div>
-                    )}
                 </div>
 
                 <div id="debug-side-panel" className="w-80 bg-[#252526] border-l border-[#333] flex flex-col overflow-hidden text-xs text-gray-300">
