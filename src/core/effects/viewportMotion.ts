@@ -12,7 +12,7 @@ export * from './viewMapper.ts';
  * relatively stationary (within a bounding box) for a minimum duration.
  * Returns these periods as synthetic 'HoverEvents'.
  */
-export function findHoverEvents(
+function findHoverEvents(
     events: UserEvent[],
     inputSize: Size
 ): UserEvent[] {
