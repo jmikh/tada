@@ -1,4 +1,4 @@
-import type { DragEvent, Point, Rect, TimestampedPoint } from '../../core/types';
+import type { DragEvent, Point, Rect, MousePositionEvent } from '../../core/types';
 import type { ViewMapper } from '../../core/effects/viewMapper';
 
 /**
@@ -51,13 +51,13 @@ export function drawDragEffects(
     }
 }
 
-function getPointAtTime(path: TimestampedPoint[], time: number): Point {
+function getPointAtTime(path: MousePositionEvent[], time: number): Point {
     // Find segment [p1, p2] where p1.t <= time <= p2.t
     if (path.length === 0) return { x: 0, y: 0 };
-    if (time <= path[0].timestamp) return { x: path[0].x, y: path[0].y };
+    if (time <= path[0].timestamp) return { x: path[0].mousePos.x, y: path[0].mousePos.y };
     if (time >= path[path.length - 1].timestamp) {
         const last = path[path.length - 1];
-        return { x: last.x, y: last.y };
+        return { x: last.mousePos.x, y: last.mousePos.y };
     }
 
     for (let i = 0; i < path.length - 1; i++) {
@@ -69,11 +69,11 @@ function getPointAtTime(path: TimestampedPoint[], time: number): Point {
             const t = range === 0 ? 0 : (time - p1.timestamp) / range;
 
             return {
-                x: p1.x + (p2.x - p1.x) * t,
-                y: p1.y + (p2.y - p1.y) * t
+                x: p1.mousePos.x + (p2.mousePos.x - p1.mousePos.x) * t,
+                y: p1.mousePos.y + (p2.mousePos.y - p1.mousePos.y) * t
             };
         }
     }
 
-    return { x: path[0].x, y: path[0].y };
+    return { x: path[0].mousePos.x, y: path[0].mousePos.y };
 }

@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { type Size, EventType, type TimestampedPoint } from '../core/types';
+import { type Size, EventType, type MousePositionEvent, type Rect } from '../core/types';
 
 // Prevent duplicate injection
 if ((window as any).hasRecordoInjected) {
@@ -12,8 +12,11 @@ logger.log("[Recordo] Content script loaded");
 let isRecording = false;
 
 // Event Capture State
-let lastMouseX = 0;
-let lastMouseY = 0;
+let lastMousePos: MousePositionEvent = {
+    type: EventType.MOUSEPOS,
+    timestamp: 0,
+    mousePos: { x: 0, y: 0 }
+};
 let lastMouseTime = 0;
 let recordingStartTime = 0;
 const MOUSE_POLL_INTERVAL = 100;
@@ -89,9 +92,12 @@ chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response) => {
 
 const captureOptions = { capture: true };
 
-function dprScaleNumber(value: number): number {
+function dprScalePoint(point: { x: number, y: number }): { x: number, y: number } {
     const dpr = window.devicePixelRatio || 1;
-    return value * dpr;
+    return {
+        x: point.x * dpr,
+        y: point.y * dpr
+    };
 }
 
 function dprScaleRect(rect: { x: number, y: number, width: number, height: number }) {
@@ -106,13 +112,17 @@ function dprScaleRect(rect: { x: number, y: number, width: number, height: numbe
 
 document.addEventListener('mousemove', (e) => {
     if (!isRecording) return;
-    lastMouseX = e.clientX;
-    lastMouseY = e.clientY;
+    const scaled = dprScalePoint({ x: e.clientX, y: e.clientY });
+    lastMousePos = {
+        type: EventType.MOUSEPOS,
+        timestamp: Date.now(),
+        mousePos: scaled
+    };
 }, captureOptions);
 
 // Click Synthesis State
 let bufferedMouseDown: { event: any, timestamp: number } | null = null;
-let dragPath: TimestampedPoint[] = [];
+let dragPath: MousePositionEvent[] = [];
 const CLICK_THRESHOLD = 500; // ms
 const DRAG_DISTANCE_THRESHOLD = 5; // px
 
@@ -120,31 +130,34 @@ document.addEventListener('pointerdown', (e) => {
     if (!isRecording) return;
     const x = e.clientX;
     const y = e.clientY;
+    const dpr = window.devicePixelRatio || 1;
     let elementMeta: Partial<Size> = {};
     if (e.target instanceof Element) {
         const rect = e.target.getBoundingClientRect();
         elementMeta = {
-            width: dprScaleNumber(rect.width),
-            height: dprScaleNumber(rect.height)
+            width: rect.width * dpr,
+            height: rect.height * dpr
         };
     }
 
     // Scale now!
-    const scaledX = dprScaleNumber(x);
-    const scaledY = dprScaleNumber(y);
+    const scaledPos = dprScalePoint({ x, y });
 
     const now = Date.now();
     bufferedMouseDown = {
         event: {
-            x: scaledX,
-            y: scaledY,
+            mousePos: scaledPos,
             ...elementMeta, // Already scaled
         },
         timestamp: now
     };
 
     // Start tracking path (scaled)
-    dragPath = [{ x: scaledX, y: scaledY, timestamp: now }];
+    dragPath = [{
+        type: EventType.MOUSEPOS,
+        mousePos: scaledPos,
+        timestamp: now
+    }];
 
 }, captureOptions);
 
@@ -158,25 +171,31 @@ document.addEventListener('pointerup', (e) => {
     const diff = now - bufferedMouseDown.timestamp;
 
     // Current posiiton (scaled)
-    const scaledX = dprScaleNumber(e.clientX);
-    const scaledY = dprScaleNumber(e.clientY);
+    const scaledPos = dprScalePoint({ x: e.clientX, y: e.clientY });
 
     // Calculate distance moved
-    const startPt = dragPath[0];
-    const dx = scaledX - startPt.x;
-    const dy = scaledY - startPt.y;
+    const startPt = dragPath[0].mousePos;
+    const dx = scaledPos.x - startPt.x;
+    const dy = scaledPos.y - startPt.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (diff <= CLICK_THRESHOLD && dist < DRAG_DISTANCE_THRESHOLD) {
         sendMessageToBackground(EventType.CLICK, {
             ...bufferedMouseDown.event, // Already scaled
+            type: EventType.CLICK,
             timestamp: bufferedMouseDown.timestamp
         });
     } else {
-        dragPath.push({ x: scaledX, y: scaledY, timestamp: now });
+        dragPath.push({
+            type: EventType.MOUSEPOS,
+            mousePos: scaledPos,
+            timestamp: now
+        });
 
         sendMessageToBackground(EventType.MOUSEDRAG, {
+            type: EventType.MOUSEDRAG,
             timestamp: bufferedMouseDown.timestamp, // Start time
+            mousePos: bufferedMouseDown.event.mousePos,
             path: dragPath // Already scaled
         });
     }
@@ -224,20 +243,16 @@ setInterval(() => {
     if (now - lastMouseTime >= MOUSE_POLL_INTERVAL) {
         lastMouseTime = now;
 
-        const scaledX = dprScaleNumber(lastMouseX);
-        const scaledY = dprScaleNumber(lastMouseY);
-
         sendMessageToBackground(EventType.MOUSEPOS, {
-            timestamp: now,
-            x: scaledX,
-            y: scaledY,
+            ...lastMousePos,
+            timestamp: now
         });
 
         // If dragging, record point
         if (bufferedMouseDown) {
             dragPath.push({
-                x: scaledX,
-                y: scaledY,
+                type: EventType.MOUSEPOS,
+                mousePos: lastMousePos.mousePos,
                 timestamp: now
             });
         }
@@ -249,6 +264,7 @@ function sendUrlEvent() {
     if (!isRecording) return;
     sendMessageToBackground(EventType.URLCHANGE, {
         timestamp: Date.now(),
+        mousePos: lastMousePos.mousePos, // Use last known pos
         url: window.location.href,
     });
 }
@@ -322,6 +338,7 @@ window.addEventListener('keydown', (e) => {
 
         sendMessageToBackground(EventType.KEYDOWN, {
             timestamp: Date.now(),
+            mousePos: lastMousePos.mousePos, // Attach last known position
             key: e.key,
             code: e.code,
             ctrlKey: e.ctrlKey,
@@ -349,31 +366,25 @@ window.addEventListener('scroll', (e) => {
 
     if (!chrome.runtime?.id) return;
 
-    let x = 0;
-    let y = 0;
-    let width = window.innerWidth;
-    let height = window.innerHeight;
+    let boundingBox : Rect = {
+        x: 0,
+        y: 0,
+        width: window.innerWidth,
+        height: window.innerHeight
+    };
     if (e.target instanceof Element) {
         // It's a nested element scroll
         const rect = e.target.getBoundingClientRect();
-        x = rect.left;
-        y = rect.top;
-        width = rect.width;
-        height = rect.height;
+        boundingBox.x = rect.left;
+        boundingBox.y = rect.top;
+        boundingBox.width = rect.width;
+        boundingBox.height = rect.height;
     }
 
 
-    const boundingBox = dprScaleRect({
-        x,
-        y,
-        width,
-        height
-    });
-
     sendMessageToBackground('SCROLL', {
         timestamp: now,
-        x: dprScaleNumber(lastMouseX),
-        y: dprScaleNumber(lastMouseY),
-        boundingBox
+        mousePos: lastMousePos.mousePos,
+        boundingBox : dprScaleRect(boundingBox)
     });
 }, true); // Use capture to detect nested scrolls (which don't bubble)

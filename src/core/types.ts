@@ -98,8 +98,8 @@ export interface SourceMetadata {
  * Contains raw recorded interactions categorized by type.
  */
 export interface UserEvents {
-    mouseClicks: MouseEvent[];
-    mousePositions: MouseEvent[]; // mousepos
+    mouseClicks: MouseClickEvent[];
+    mousePositions: MousePositionEvent[]; // mousepos
     keyboardEvents: KeyboardEvent[];
     drags: DragEvent[];
     scrolls: ScrollEvent[];
@@ -171,7 +171,7 @@ export interface ViewportMotion {
  */
 export interface DragEvent extends BaseEvent {
     type: typeof EventType.MOUSEDRAG;
-    path: TimestampedPoint[];
+    path: MousePositionEvent[];
 }
 
 // ==========================================
@@ -195,16 +195,18 @@ export const EventType = {
 
 export type EventType = typeof EventType[keyof typeof EventType];
 
-export interface TimestampedPoint extends Point {
-    timestamp: number;
-}
-
 export interface BaseEvent {
+    type: EventType;
     timestamp: number;
+    mousePos: Point;
 }
 
-export interface MouseEvent extends BaseEvent, Point {
-    type: typeof EventType.CLICK | typeof EventType.MOUSEPOS;
+export interface MouseClickEvent extends BaseEvent {
+    type: typeof EventType.CLICK;
+}
+
+export interface MousePositionEvent extends BaseEvent {
+    type: typeof EventType.MOUSEPOS;
 }
 
 export interface UrlEvent extends BaseEvent {
@@ -223,18 +225,18 @@ export interface KeyboardEvent extends BaseEvent {
     tagName?: string;
 }
 
-export interface HoverEvent extends BaseEvent, Point {
+export interface HoverEvent extends BaseEvent {
     type: typeof EventType.HOVER;
     endTime: number;
 }
 
 
-export interface ScrollEvent extends BaseEvent, Point {
+export interface ScrollEvent extends BaseEvent {
     type: typeof EventType.SCROLL;
     boundingBox: Rect;
 }
 
-export type UserEvent = MouseEvent | UrlEvent | KeyboardEvent | HoverEvent | DragEvent | ScrollEvent;
+export type UserEvent = MouseClickEvent | MousePositionEvent | UrlEvent | KeyboardEvent | HoverEvent | DragEvent | ScrollEvent;
 
 export type BackgroundType = 'solid' | 'image';
 

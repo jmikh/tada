@@ -52,10 +52,10 @@ function findHoverEvents(
         }
 
         let j = i;
-        let minX = events.mousePositions[i].x;
-        let maxX = events.mousePositions[i].x;
-        let minY = events.mousePositions[i].y;
-        let maxY = events.mousePositions[i].y;
+        let minX = events.mousePositions[i].mousePos.x;
+        let maxX = events.mousePositions[i].mousePos.x;
+        let minY = events.mousePositions[i].mousePos.y;
+        let maxY = events.mousePositions[i].mousePos.y;
 
         while (j < events.mousePositions.length) {
             const p = events.mousePositions[j]; // p is MouseEvent
@@ -63,10 +63,11 @@ function findHoverEvents(
                 break;
             }
 
-            const newMinX = Math.min(minX, p.x);
-            const newMaxX = Math.max(maxX, p.x);
-            const newMinY = Math.min(minY, p.y);
-            const newMaxY = Math.max(maxY, p.y);
+            const newMinX = Math.min(minX, p.mousePos.x);
+            const newMaxX = Math.max(maxX, p.mousePos.x);
+            const newMinY = Math.min(minY, p.mousePos.y);
+            const newMaxY = Math.max(maxY, p.mousePos.y);
+
 
             if ((newMaxX - newMinX) <= hoverBoxSize && (newMaxY - newMinY) <= hoverBoxSize) {
                 minX = newMinX;
@@ -86,14 +87,13 @@ function findHoverEvents(
 
             if (duration >= hoverMinDurationMs) {
                 const points = events.mousePositions.slice(i, j);
-                const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
-                const centerY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+                const centerX = points.reduce((sum, p) => sum + p.mousePos.x, 0) / points.length;
+                const centerY = points.reduce((sum, p) => sum + p.mousePos.y, 0) / points.length;
 
                 hoverEvents.push({
                     type: 'hover',
                     timestamp: startEvent.timestamp, // Source Time
-                    x: centerX,
-                    y: centerY,
+                    mousePos: { x: centerX, y: centerY },
                     endTime: endEvent.timestamp
                 } as UserEvent);
                 i = j;
@@ -252,7 +252,7 @@ function createTargetViewport(evt: any, viewMapper: ViewMapper, defaultZoomLevel
         // 2. Calculate Center (Horizontal: Box Center, Vertical: Mouse Position)
         const inputBoxCenterX = evt.boundingBox.x + evt.boundingBox.width / 2;
         // Use evt.y (mouseY mapped to Point.y)
-        const inputMouseY = evt.y;
+        const inputMouseY = evt.mousePos.y;
 
         const centerOutput = viewMapper.inputToOutput({ x: inputBoxCenterX, y: inputMouseY });
         centerX = centerOutput.x;
@@ -263,7 +263,7 @@ function createTargetViewport(evt: any, viewMapper: ViewMapper, defaultZoomLevel
         targetWidth = outputSize.width / defaultZoomLevel;
         targetHeight = outputSize.height / defaultZoomLevel;
 
-        const centerOutput = viewMapper.inputToOutput({ x: evt.x, y: evt.y });
+        const centerOutput = viewMapper.inputToOutput({ x: evt.mousePos.x, y: evt.mousePos.y });
         centerX = centerOutput.x;
         centerY = centerOutput.y;
     }

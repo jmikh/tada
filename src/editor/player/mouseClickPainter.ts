@@ -1,4 +1,4 @@
-import type { MouseEvent, Rect } from '../../core/types';
+import type { MouseClickEvent, Rect } from '../../core/types';
 import type { ViewMapper } from '../../core/effects/viewMapper';
 
 /**
@@ -12,7 +12,7 @@ import type { ViewMapper } from '../../core/effects/viewMapper';
  */
 export function paintMouseClicks(
     ctx: CanvasRenderingContext2D,
-    events: MouseEvent[],
+    events: MouseClickEvent[],
     currentTime: number,
     viewport: Rect,
     viewMapper: ViewMapper
@@ -31,7 +31,7 @@ export function paintMouseClicks(
             const progress = elapsed / CLICK_DURATION;
 
             // Project Center (Input -> Screen)
-            const center = viewMapper.projectToScreen(click, viewport);
+            const center = viewMapper.projectToScreen(click.mousePos, viewport);
 
             // Draw Expanding Expanding Circle
             // Scale radius by zoom level
