@@ -16,7 +16,7 @@ export function drawScreen(
     userEvents: UserEvents | null,
     currentTimeMs: TimeMs
 ) {
-    const { timeline, sources, outputSettings, background } = project;
+    const { timeline, sources } = project;
     const { recording, outputWindows } = timeline;
 
     // 1. Resolve Data
@@ -34,7 +34,7 @@ export function drawScreen(
     const effectiveViewport = getViewportStateAtTime(
         viewportMotions,
         outputTimeMs, // Use Output Time for Viewport motion (smoothness)
-        outputSettings.size,
+        project.settings.outputSize,
         outputWindows,
         recording.timelineOffsetMs
     );
@@ -48,7 +48,9 @@ export function drawScreen(
     if (!inputSize || inputSize.width === 0) return;
 
     // 4. Resolve View Mapping
-    const viewMapper = new ViewMapper(inputSize, outputSettings.size, background.padding ?? 0.1);
+    const outputSize = project.settings.outputSize;
+    const padding = project.settings.padding ?? 0.1;
+    const viewMapper = new ViewMapper(inputSize, outputSize, padding);
 
     // 5. Draw Video
     const renderRects = viewMapper.resolveRenderRects(effectiveViewport);

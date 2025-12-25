@@ -1,21 +1,21 @@
-import type { BackgroundSettings } from '../../core/types';
+import type { ProjectSettings } from '../../core/types';
 
 /**
  * Draws the project background (solid color or image) onto the canvas.
  */
 export const drawBackground = (
     ctx: CanvasRenderingContext2D,
-    background: BackgroundSettings,
+    settings: ProjectSettings,
     canvas: HTMLCanvasElement,
     bgImage: HTMLImageElement | null
 ) => {
     // 1. Solid Color
-    if (background.type === 'solid' && background.color) {
-        ctx.fillStyle = background.color;
+    if (settings.backgroundType === 'solid' && settings.backgroundColor) {
+        ctx.fillStyle = settings.backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     // 2. Image (Cover Mode)
-    else if (background.type === 'image' && bgImage && background.imageUrl) {
+    else if (settings.backgroundType === 'image' && bgImage && settings.backgroundImageUrl) {
         if (bgImage.complete && bgImage.naturalWidth > 0) {
             const imgW = bgImage.naturalWidth;
             const imgH = bgImage.naturalHeight;

@@ -1,7 +1,7 @@
 import { create, useStore } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { temporal, type TemporalState } from 'zundo';
-import type { Project, ID, Recording, OutputWindow, UserEvents, ViewportMotion } from '../../core/types';
+import type { Project, ID, Recording, OutputWindow, UserEvents, ViewportMotion, ProjectSettings } from '../../core/types';
 import { ProjectImpl } from '../../core/project/Project';
 import { ProjectLibrary } from '../../core/project/ProjectLibrary';
 import { calculateZoomSchedule, ViewMapper } from '../../core/effects/viewportMotion';
@@ -23,13 +23,13 @@ interface ProjectState {
     removeOutputWindow: (id: ID) => void;
     splitWindow: (windowId: ID, splitTimeMs: number) => void;
 
-    // Zoom Actions
-    updateZoomSettings: (updates: Partial<Project['zoom']>) => void;
+    // Settings Actions
+    updateSettings: (settings: Partial<ProjectSettings>) => void;
 }
 
 // Helper to recalculate zooms synchronously
 const recalculateAutoZooms = (project: Project, events: UserEvents | null): ViewportMotion[] => {
-    if (!project.zoom.auto) {
+    if (!project.settings.autoZoom) {
         return project.timeline.recording.viewportMotions; // Return existing if auto is off (or empty?)
     }
 
@@ -43,12 +43,12 @@ const recalculateAutoZooms = (project: Project, events: UserEvents | null): View
 
     const viewMapper = new ViewMapper(
         sourceMetadata.size,
-        project.outputSettings.size,
-        project.background.padding
+        project.settings.outputSize,
+        project.settings.padding
     );
 
     return calculateZoomSchedule(
-        project.zoom.maxZoom,
+        project.settings.maxZoom,
         viewMapper,
         events,
         project.timeline.outputWindows,
@@ -66,6 +66,7 @@ export const useProjectStore = create<ProjectState>()(
                 isSaving: false,
 
                 loadProject: async (project) => {
+                    console.log('[Action] loadProject', project.id);
                     // 1. Set Project immediately
                     set({ project });
 
@@ -92,6 +93,7 @@ export const useProjectStore = create<ProjectState>()(
                 },
 
                 saveProject: async () => {
+                    console.log('[Action] saveProject');
                     set({ isSaving: true });
                     try {
                         await ProjectLibrary.saveProject(get().project);
@@ -102,190 +104,229 @@ export const useProjectStore = create<ProjectState>()(
                     }
                 },
 
-                updateRecording: (updates) => set((state) => ({
-                    project: {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
-                            recording: {
-                                ...state.project.timeline.recording,
+                updateRecording: (updates) => {
+                    console.log('[Action] updateRecording', updates);
+                    set((state) => ({
+                        project: {
+                            ...state.project,
+                            timeline: {
+                                ...state.project.timeline,
+                                recording: {
+                                    ...state.project.timeline.recording,
+                                    ...updates
+                                }
+                            },
+                            updatedAt: new Date()
+                        }
+                    }));
+                },
+
+                updateTimeline: (updates) => {
+                    console.log('[Action] updateTimeline', updates);
+                    set((state) => ({
+                        project: {
+                            ...state.project,
+                            timeline: {
+                                ...state.project.timeline,
                                 ...updates
-                            }
-                        },
-                        updatedAt: new Date()
-                    }
-                })),
+                            },
+                            updatedAt: new Date()
+                        }
+                    }));
+                },
 
-                updateTimeline: (updates) => set((state) => ({
-                    project: {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
+                updateSettings: (updates) => {
+                    console.log('[Action] updateSettings', updates);
+                    set((state) => {
+                        // Flat settings = simple shallow merge!
+                        const nextSettings: ProjectSettings = {
+                            ...state.project.settings,
                             ...updates
-                        },
-                        updatedAt: new Date()
-                    }
-                })),
+                        };
 
-                updateZoomSettings: (updates) => set((state) => {
-                    const nextProject = {
-                        ...state.project,
-                        zoom: { ...state.project.zoom, ...updates },
-                        updatedAt: new Date()
-                    };
+                        const nextProject = {
+                            ...state.project,
+                            settings: nextSettings,
+                            updatedAt: new Date()
+                        };
 
-                    // Recalculate Zooms if settings changed
-                    const nextMotions = recalculateAutoZooms(nextProject, state.userEvents);
+                        // Recalculate Zooms if necessary conditions met
+                        // 1. Zoom settings changed
+                        // 2. Padding changed
+                        let nextMotions = state.project.timeline.recording.viewportMotions;
 
-                    return {
-                        project: {
-                            ...nextProject,
-                            timeline: {
-                                ...nextProject.timeline,
-                                recording: {
-                                    ...nextProject.timeline.recording,
-                                    viewportMotions: nextMotions
+                        const paddingChanged = updates.padding !== undefined &&
+                            updates.padding !== state.project.settings.padding;
+
+                        // Check for any zoom related changes
+                        const zoomChanged = updates.maxZoom !== undefined || updates.autoZoom !== undefined;
+
+                        if (paddingChanged || zoomChanged) {
+                            nextMotions = recalculateAutoZooms(nextProject, state.userEvents);
+                        }
+
+                        return {
+                            project: {
+                                ...nextProject,
+                                timeline: {
+                                    ...nextProject.timeline,
+                                    recording: {
+                                        ...nextProject.timeline.recording,
+                                        viewportMotions: nextMotions
+                                    }
                                 }
                             }
-                        }
-                    };
-                }),
+                        };
+                    });
+                },
 
-                addOutputWindow: (window) => set((state) => {
-                    const nextOutputWindows = [...state.project.timeline.outputWindows, window].sort((a, b) => a.startMs - b.startMs);
+                addOutputWindow: (window) => {
+                    console.log('[Action] addOutputWindow', window);
+                    set((state) => {
+                        const nextOutputWindows = [...state.project.timeline.outputWindows, window].sort((a, b) => a.startMs - b.startMs);
 
-                    // Temporary project state to calculate zooms
-                    const tempProject = {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
-                            outputWindows: nextOutputWindows
-                        }
-                    };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
-
-                    return {
-                        project: {
-                            ...tempProject,
+                        // Temporary project state to calculate zooms
+                        const tempProject = {
+                            ...state.project,
                             timeline: {
-                                ...tempProject.timeline,
-                                recording: {
-                                    ...tempProject.timeline.recording,
-                                    viewportMotions: nextMotions
-                                }
-                            },
-                            updatedAt: new Date()
-                        }
-                    };
-                }),
+                                ...state.project.timeline,
+                                outputWindows: nextOutputWindows
+                            }
+                        };
+                        const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
-                updateOutputWindow: (id, updates) => set((state) => {
-                    const nextOutputWindows = state.project.timeline.outputWindows
-                        .map(w => w.id === id ? { ...w, ...updates } : w)
-                        .sort((a, b) => a.startMs - b.startMs);
+                        return {
+                            project: {
+                                ...tempProject,
+                                timeline: {
+                                    ...tempProject.timeline,
+                                    recording: {
+                                        ...tempProject.timeline.recording,
+                                        viewportMotions: nextMotions
+                                    }
+                                },
+                                updatedAt: new Date()
+                            }
+                        };
+                    });
+                },
 
-                    const tempProject = {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
-                            outputWindows: nextOutputWindows
-                        }
-                    };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
+                updateOutputWindow: (id, updates) => {
+                    console.log('[Action] updateOutputWindow', id, updates);
+                    set((state) => {
+                        const nextOutputWindows = state.project.timeline.outputWindows
+                            .map(w => w.id === id ? { ...w, ...updates } : w)
+                            .sort((a, b) => a.startMs - b.startMs);
 
-                    return {
-                        project: {
-                            ...tempProject,
+                        const tempProject = {
+                            ...state.project,
                             timeline: {
-                                ...tempProject.timeline,
-                                recording: {
-                                    ...tempProject.timeline.recording,
-                                    viewportMotions: nextMotions
-                                }
-                            },
-                            updatedAt: new Date()
-                        }
-                    };
-                }),
+                                ...state.project.timeline,
+                                outputWindows: nextOutputWindows
+                            }
+                        };
+                        const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
-                removeOutputWindow: (id) => set((state) => {
-                    const nextOutputWindows = state.project.timeline.outputWindows.filter(w => w.id !== id);
+                        return {
+                            project: {
+                                ...tempProject,
+                                timeline: {
+                                    ...tempProject.timeline,
+                                    recording: {
+                                        ...tempProject.timeline.recording,
+                                        viewportMotions: nextMotions
+                                    }
+                                },
+                                updatedAt: new Date()
+                            }
+                        };
+                    });
+                },
 
-                    const tempProject = {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
-                            outputWindows: nextOutputWindows
-                        }
-                    };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
+                removeOutputWindow: (id) => {
+                    console.log('[Action] removeOutputWindow', id);
+                    set((state) => {
+                        const nextOutputWindows = state.project.timeline.outputWindows.filter(w => w.id !== id);
 
-                    return {
-                        project: {
-                            ...tempProject,
+                        const tempProject = {
+                            ...state.project,
                             timeline: {
-                                ...tempProject.timeline,
-                                recording: {
-                                    ...tempProject.timeline.recording,
-                                    viewportMotions: nextMotions
-                                }
-                            },
-                            updatedAt: new Date()
-                        }
-                    };
-                }),
+                                ...state.project.timeline,
+                                outputWindows: nextOutputWindows
+                            }
+                        };
+                        const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
-                splitWindow: (windowId, splitTimeMs) => set((state) => {
-                    // 1. Find the window to split
-                    const windowIndex = state.project.timeline.outputWindows.findIndex(w => w.id === windowId);
-                    if (windowIndex === -1) return state; // No-op if not found
+                        return {
+                            project: {
+                                ...tempProject,
+                                timeline: {
+                                    ...tempProject.timeline,
+                                    recording: {
+                                        ...tempProject.timeline.recording,
+                                        viewportMotions: nextMotions
+                                    }
+                                },
+                                updatedAt: new Date()
+                            }
+                        };
+                    });
+                },
 
-                    const originalWin = state.project.timeline.outputWindows[windowIndex];
+                splitWindow: (windowId, splitTimeMs) => {
+                    console.log('[Action] splitWindow', windowId, splitTimeMs);
+                    set((state) => {
+                        // 1. Find the window to split
+                        const windowIndex = state.project.timeline.outputWindows.findIndex(w => w.id === windowId);
+                        if (windowIndex === -1) return state; // No-op if not found
 
-                    // 2. Shrink original window
-                    const shrunkWin = { ...originalWin, endMs: splitTimeMs };
+                        const originalWin = state.project.timeline.outputWindows[windowIndex];
 
-                    // 3. Create new window
-                    // We need a way to generate IDs safely. Using randomUUID for now.
-                    const newWin: OutputWindow = {
-                        id: crypto.randomUUID(),
-                        startMs: splitTimeMs,
-                        endMs: originalWin.endMs
-                    };
+                        // 2. Shrink original window
+                        const shrunkWin = { ...originalWin, endMs: splitTimeMs };
 
-                    // 4. Construct new window list
-                    // We replace the original with shrunk, and append the new one.
-                    // Then sort.
-                    let nextOutputWindows = [...state.project.timeline.outputWindows];
-                    nextOutputWindows[windowIndex] = shrunkWin;
-                    nextOutputWindows.push(newWin);
-                    nextOutputWindows.sort((a, b) => a.startMs - b.startMs);
+                        // 3. Create new window
+                        // We need a way to generate IDs safely. Using randomUUID for now.
+                        const newWin: OutputWindow = {
+                            id: crypto.randomUUID(),
+                            startMs: splitTimeMs,
+                            endMs: originalWin.endMs
+                        };
 
-                    // 5. Recalculate Zooms (Atomic!)
-                    const tempProject = {
-                        ...state.project,
-                        timeline: {
-                            ...state.project.timeline,
-                            outputWindows: nextOutputWindows
-                        }
-                    };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
+                        // 4. Construct new window list
+                        // We replace the original with shrunk, and append the new one.
+                        // Then sort.
+                        let nextOutputWindows = [...state.project.timeline.outputWindows];
+                        nextOutputWindows[windowIndex] = shrunkWin;
+                        nextOutputWindows.push(newWin);
+                        nextOutputWindows.sort((a, b) => a.startMs - b.startMs);
 
-                    // 6. Return new state
-                    return {
-                        project: {
-                            ...tempProject,
+                        // 5. Recalculate Zooms (Atomic!)
+                        const tempProject = {
+                            ...state.project,
                             timeline: {
-                                ...tempProject.timeline,
-                                recording: {
-                                    ...tempProject.timeline.recording,
-                                    viewportMotions: nextMotions
-                                }
-                            },
-                            updatedAt: new Date()
-                        }
-                    };
-                }),
+                                ...state.project.timeline,
+                                outputWindows: nextOutputWindows
+                            }
+                        };
+                        const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
+
+                        // 6. Return new state
+                        return {
+                            project: {
+                                ...tempProject,
+                                timeline: {
+                                    ...tempProject.timeline,
+                                    recording: {
+                                        ...tempProject.timeline.recording,
+                                        viewportMotions: nextMotions
+                                    }
+                                },
+                                updatedAt: new Date()
+                            }
+                        };
+                    });
+                },
             }),
             {
                 // Zundo Configuration

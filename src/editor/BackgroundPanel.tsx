@@ -8,21 +8,27 @@ const BACKGROUND_IMAGES = [
 
 export const BackgroundPanel = () => {
     const project = useProjectData();
-    const loadProject = useProjectStore(s => s.loadProject);
+    const updateSettings = useProjectStore(s => s.updateSettings);
 
     if (!project) return null;
 
     // Defensive: Ensure background exists (migration fallback)
-    const background = project.background || { type: 'solid', color: '#000000' };
+    const background = {
+        type: project.settings.backgroundType,
+        color: project.settings.backgroundColor,
+        padding: project.settings.padding,
+        imageUrl: project.settings.backgroundImageUrl
+    };
 
     const updateBackground = (updates: Partial<typeof background>) => {
-        loadProject({
-            ...project,
-            background: {
-                ...background,
-                ...updates
-            }
-        });
+        // Map back to flat updates
+        const flatUpdates: any = {};
+        if (updates.type) flatUpdates.backgroundType = updates.type;
+        if (updates.color) flatUpdates.backgroundColor = updates.color;
+        if (updates.padding !== undefined) flatUpdates.padding = updates.padding;
+        if (updates.imageUrl !== undefined) flatUpdates.backgroundImageUrl = updates.imageUrl;
+
+        updateSettings(flatUpdates);
     };
 
     return (

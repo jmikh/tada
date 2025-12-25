@@ -98,13 +98,13 @@ function Editor() {
 
     // Derived UI State
     const hasActiveProject = Object.keys(project.sources).length > 0;
-    const outputVideoSize = project?.outputSettings.size;
+    const projectOutputSize = project.settings.outputSize;
 
     // Calculate Rendered Rect (for overlay positioning)
     let renderedStyle = {};
-    if (outputVideoSize && outputVideoSize.width > 0) {
+    if (projectOutputSize && projectOutputSize.width > 0) {
         const containerAspect = containerSize.width / containerSize.height;
-        const videoAspect = outputVideoSize.width / outputVideoSize.height;
+        const videoAspect = projectOutputSize.width / projectOutputSize.height;
 
         let rw, rh;
         if (containerAspect > videoAspect) {

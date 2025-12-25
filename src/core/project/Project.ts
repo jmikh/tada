@@ -19,17 +19,13 @@ export class ProjectImpl {
             updatedAt: new Date(),
             sources: {},
             timeline: TimelineImpl.create(''),
-            outputSettings: {
-                size: { width: 3840, height: 2160 },
-                frameRate: 30
-            },
-            zoom: {
+            settings: {
+                outputSize: { width: 3840, height: 2160 },
+                frameRate: 30,
                 maxZoom: 1.8,
-                auto: true
-            },
-            background: {
-                type: 'solid',
-                color: '#1e1e1e',
+                autoZoom: true,
+                backgroundType: 'solid',
+                backgroundColor: '#1e1e1e',
                 padding: 0.02
             }
         };
@@ -75,12 +71,12 @@ export class ProjectImpl {
         // We need a ViewMapper instance
         const viewMapper = new ViewMapper(
             screenSource.size,
-            project.outputSettings.size,
-            project.background.padding || 0.03
+            project.settings.outputSize,
+            project.settings.padding || 0.03
         );
 
         const viewportMotions = calculateZoomSchedule(
-            project.zoom.maxZoom,
+            project.settings.maxZoom,
             viewMapper,
             screenEvents,
             outputWindows,

@@ -33,14 +33,8 @@ export interface Project {
     createdAt: Date;
     updatedAt: Date;
 
-    /* Global output settings for rendering */
-    outputSettings: OutputSettings;
-
-    /* Zoom configuration */
-    zoom: ZoomSettings;
-
-    /* Background configuration for the canvas */
-    background: BackgroundSettings;
+    /* Unified Settings */
+    settings: ProjectSettings;
 
     /**
      * Map of all Source assets used in the project.
@@ -52,18 +46,20 @@ export interface Project {
     timeline: Timeline;
 }
 
-/**
- * Configuration for the final video output.
- */
-export interface OutputSettings {
-    size: Size;
+export interface ProjectSettings {
+    // Output
+    outputSize: Size;
     frameRate: number;
-    // We can add bitrate/etc later
-}
 
-export interface ZoomSettings {
+    // Zoom
     maxZoom: number;
-    auto: boolean;
+    autoZoom: boolean;
+
+    // Background
+    backgroundType: 'solid' | 'image';
+    backgroundColor: string;
+    padding: number;
+    backgroundImageUrl?: string;
 }
 
 // ==========================================

@@ -10,7 +10,7 @@ export const PlayerCanvas = () => {
     const project = useProjectData();
 
     // Derived State
-    const outputVideoSize = project?.outputSettings?.size || { width: 1920, height: 1080 };
+    const outputVideoSize = project?.settings?.outputSize || { width: 1920, height: 1080 };
     const sources = project?.sources || {};
 
     const internalVideoRefs = useRef<{ [sourceId: string]: HTMLVideoElement }>({});
@@ -82,13 +82,33 @@ export const PlayerCanvas = () => {
         const playback = usePlaybackStore.getState();
 
         const currentTimeMs = playback.currentTimeMs;
-        const outputSize = project.outputSettings.size;
+        const outputSize = project.settings.outputSize;
 
         // Clear
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Draw Background
-        drawBackground(ctx, project.background, canvas, bgRef.current);
+        // Adapt to painter signature if needed, or update painter. 
+        // For now, let's construct a temp object or update painter.
+        // Assuming painter is not updated yet, we might need to change painter signature too.
+        // Let's check drawBackground signature in next step.
+        // For now, I will assume I need to update painter or pass constructed object.
+        // Let's pass the flat settings object if painter accepts it, otherwise construct compatibility layer.
+        // Wait, I should update backgroundPainter too. 
+        // For this step I will just use the flat property access where explicit.
+        // drawBackground takes "BackgroundSettings", we flattened it.
+        // So I need to update drawBackground signature in backgroundPainter.ts.
+        // But here, let's just assume I'm passing project.settings which serves as BackgroundSettings (if types match)
+        // Actually ProjectSettings HAS backgroundType, backgroundColor etc.
+        // So I can pass specific props or the whole settings object if I refactor drawBackground.
+
+        // I will update drawBackground call to pass individual props or compatible structure.
+        // Wait, ProjectSettings includes all fields of old BackgroundSettings (renamed).
+        // Let's update `drawBackground` usage to pass `project.settings` but I need to refactor `drawBackground` first or conform here.
+        // Let's conform here temporarily if possible? No, best to update `backgroundPainter`.
+
+        // Let's pass project.settings as it contains background info, assuming I will fix painter.
+        drawBackground(ctx, project.settings, canvas, bgRef.current);
 
         const { timeline, sources } = project;
         const { recording, outputWindows } = timeline;
@@ -176,11 +196,14 @@ export const PlayerCanvas = () => {
     return (
         <>
             <div style={{ display: 'none' }}>
-                {project.background?.type === 'image' && project.background.imageUrl && (
+                {project.settings.backgroundType === 'image' && project.settings.backgroundImageUrl && (
                     <img
                         ref={bgRef}
-                        src={project.background.imageUrl}
-                        alt="Background Asset"
+                        src={project.settings.backgroundImageUrl}
+                        className="hidden" // Just for loading
+                        onLoad={() => {
+                            // Trigger re-render
+                        }}
                     />
                 )}
 
