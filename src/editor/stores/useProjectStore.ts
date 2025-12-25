@@ -8,7 +8,7 @@ import { calculateZoomSchedule, ViewMapper } from '../../core/effects/viewportMo
 
 interface ProjectState {
     project: Project;
-    userEventsCache: Record<ID, UserEvents>; // Cache of loaded events
+    userEvents: UserEvents | null; // Single set of loaded events
     isSaving: boolean;
 
     // Actions
@@ -28,14 +28,13 @@ interface ProjectState {
 }
 
 // Helper to recalculate zooms synchronously
-const recalculateAutoZooms = (project: Project, eventsCache: Record<ID, UserEvents>): ViewportMotion[] => {
+const recalculateAutoZooms = (project: Project, events: UserEvents | null): ViewportMotion[] => {
     if (!project.zoom.auto) {
         return project.timeline.recording.viewportMotions; // Return existing if auto is off (or empty?)
     }
 
     const screenSourceId = project.timeline.recording.screenSourceId;
     const sourceMetadata = project.sources[screenSourceId];
-    const events = eventsCache[screenSourceId];
 
     if (!sourceMetadata || !events) {
         console.warn("Skipping zoom recalc: Missing source or events", screenSourceId);
@@ -63,32 +62,30 @@ export const useProjectStore = create<ProjectState>()(
             (set, get) => ({
                 // Initialize with a default empty project
                 project: ProjectImpl.create('Untitled Project'),
-                userEventsCache: {},
+                userEvents: null,
                 isSaving: false,
 
                 loadProject: async (project) => {
                     // 1. Set Project immediately
                     set({ project });
 
-                    // 2. Fetch Events for all sources
-                    const newCache: Record<ID, UserEvents> = {};
-                    const promises = Object.values(project.sources).map(async (source) => {
-                        if (source.eventsUrl) {
-                            try {
-                                const events = await ProjectLibrary.loadEvents(source.eventsUrl);
-                                newCache[source.id] = events;
-                            } catch (e) {
-                                console.error(`Failed to load events for source ${source.id}`, e);
-                                // Initialize empty if failed to avoid crashes
-                                newCache[source.id] = { mouseClicks: [], keyboardEvents: [], mousePositions: [], drags: [] };
-                            }
+                    // 2. Fetch Events for the screen source
+                    let events: UserEvents | null = null;
+                    const screenSourceId = project.timeline.recording.screenSourceId;
+                    const screenSource = project.sources[screenSourceId];
+
+                    if (screenSource && screenSource.eventsUrl) {
+                        try {
+                            events = await ProjectLibrary.loadEvents(screenSource.eventsUrl);
+                        } catch (e) {
+                            console.error(`Failed to load events for source ${screenSourceId}`, e);
+                            // Initialize empty if failed to avoid crashes
+                            events = { mouseClicks: [], keyboardEvents: [], mousePositions: [], drags: [] };
                         }
-                    });
+                    }
 
-                    await Promise.all(promises);
-
-                    // 3. Update Cache
-                    set({ userEventsCache: newCache });
+                    // 3. Update Store
+                    set({ userEvents: events });
 
                     // 4. Clear History so we can't undo into valid empty state or previous project
                     useProjectStore.temporal.getState().clear();
@@ -138,7 +135,7 @@ export const useProjectStore = create<ProjectState>()(
                     };
 
                     // Recalculate Zooms if settings changed
-                    const nextMotions = recalculateAutoZooms(nextProject, state.userEventsCache);
+                    const nextMotions = recalculateAutoZooms(nextProject, state.userEvents);
 
                     return {
                         project: {
@@ -165,7 +162,7 @@ export const useProjectStore = create<ProjectState>()(
                             outputWindows: nextOutputWindows
                         }
                     };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEventsCache);
+                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
                     return {
                         project: {
@@ -194,7 +191,7 @@ export const useProjectStore = create<ProjectState>()(
                             outputWindows: nextOutputWindows
                         }
                     };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEventsCache);
+                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
                     return {
                         project: {
@@ -221,7 +218,7 @@ export const useProjectStore = create<ProjectState>()(
                             outputWindows: nextOutputWindows
                         }
                     };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEventsCache);
+                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
                     return {
                         project: {
@@ -272,7 +269,7 @@ export const useProjectStore = create<ProjectState>()(
                             outputWindows: nextOutputWindows
                         }
                     };
-                    const nextMotions = recalculateAutoZooms(tempProject, state.userEventsCache);
+                    const nextMotions = recalculateAutoZooms(tempProject, state.userEvents);
 
                     // 6. Return new state
                     return {

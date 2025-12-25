@@ -1,4 +1,4 @@
-import type { UserEvents, Project, ID, TimeMs } from '../../core/types';
+import type { UserEvents, Project, TimeMs } from '../../core/types';
 import { ViewMapper } from '../../core/effects/viewMapper';
 import { paintMouseClicks } from './mouseClickPainter';
 import { drawDragEffects } from './mouseDragPainter';
@@ -13,7 +13,7 @@ export function drawScreen(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
     project: Project,
-    userEventsCache: Record<ID, UserEvents>,
+    userEvents: UserEvents | null,
     currentTimeMs: TimeMs
 ) {
     const { timeline, sources, outputSettings, background } = project;
@@ -61,14 +61,13 @@ export function drawScreen(
     }
 
     // 6. Draw Mouse Effects Overlay
-    const activeEvents = userEventsCache[recording.screenSourceId];
-    if (activeEvents) {
+    if (userEvents) {
         // These painters use Source Time because events are recorded in Source Time
-        if (activeEvents.mouseClicks) {
-            paintMouseClicks(ctx, activeEvents.mouseClicks, sourceTimeMs, effectiveViewport, viewMapper);
+        if (userEvents.mouseClicks) {
+            paintMouseClicks(ctx, userEvents.mouseClicks, sourceTimeMs, effectiveViewport, viewMapper);
         }
-        if (activeEvents.drags) {
-            drawDragEffects(ctx, activeEvents.drags, sourceTimeMs, effectiveViewport, viewMapper);
+        if (userEvents.drags) {
+            drawDragEffects(ctx, userEvents.drags, sourceTimeMs, effectiveViewport, viewMapper);
         }
     }
 }

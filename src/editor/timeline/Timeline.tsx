@@ -17,7 +17,7 @@ export function Timeline() {
     const timeline = useProjectTimeline();
     const updateOutputWindow = useProjectStore(s => s.updateOutputWindow);
     const splitWindow = useProjectStore(s => s.splitWindow);
-    const userEventsCache = useProjectStore(s => s.userEventsCache);
+    const userEvents = useProjectStore(s => s.userEvents);
 
     const isPlaying = usePlaybackStore(s => s.isPlaying);
     const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
@@ -326,7 +326,7 @@ export function Timeline() {
                             <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">EVENTS</div>
 
                             {/* Clicks */}
-                            {userEventsCache[recording.screenSourceId]?.mouseClicks?.map((c, i) => {
+                            {userEvents?.mouseClicks?.map((c, i) => {
                                 const timeMs = c.timestamp + timelineOffset;
                                 const left = (timeMs / 1000) * pixelsPerSec;
                                 return (
@@ -340,7 +340,7 @@ export function Timeline() {
                             })}
 
                             {/* Drags */}
-                            {userEventsCache[recording.screenSourceId]?.drags?.map((d, i) => {
+                            {userEvents?.drags?.map((d, i) => {
                                 // Assuming drag starts at d.timestamp and ends at last path point
                                 const startMs = d.timestamp + timelineOffset;
                                 const endMs = (d.path && d.path.length > 0)
@@ -360,7 +360,7 @@ export function Timeline() {
                             })}
 
                             {/* Keyboard Events */}
-                            {userEventsCache[recording.screenSourceId]?.keyboardEvents?.map((k, i) => {
+                            {userEvents?.keyboardEvents?.map((k, i) => {
                                 const timeMs = k.timestamp + timelineOffset;
                                 const left = (timeMs / 1000) * pixelsPerSec;
                                 // Simple marker for now

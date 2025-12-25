@@ -38,7 +38,7 @@ export const PlayerCanvas = () => {
 
                     // GAP SKIPPING LOGIC
                     const project = useProjectStore.getState().project;
-                    const windows = project.timeline.outputWindows; 
+                    const windows = project.timeline.outputWindows;
 
                     const activeWindow = windows.find(w => nextTime >= w.startMs && nextTime < w.endMs);
 
@@ -78,7 +78,7 @@ export const PlayerCanvas = () => {
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx) return;
 
-        const { project, userEventsCache } = useProjectStore.getState();
+        const { project, userEvents } = useProjectStore.getState();
         const playback = usePlaybackStore.getState();
 
         const currentTimeMs = playback.currentTimeMs;
@@ -109,7 +109,7 @@ export const PlayerCanvas = () => {
         // 3. Resolve Items
         const screenSource = sources[recording.screenSourceId];
         const cameraSource = recording.cameraSourceId ? sources[recording.cameraSourceId] : undefined;
-        const activeEvents = userEventsCache[recording.screenSourceId];
+        // const activeEvents = userEventsCache[recording.screenSourceId]; // Removed
 
         // -----------------------------------------------------------
 
@@ -123,7 +123,7 @@ export const PlayerCanvas = () => {
                     ctx,
                     video,
                     project,
-                    userEventsCache,
+                    userEvents,
                     currentTimeMs
                 );
             } else {
@@ -142,10 +142,11 @@ export const PlayerCanvas = () => {
         }
 
         // Render Keyboard Overlay
-        if (activeEvents && activeEvents.keyboardEvents) {
+        if (userEvents && userEvents.keyboardEvents) {
+
             drawKeyboardOverlay(
                 ctx,
-                activeEvents.keyboardEvents,
+                userEvents.keyboardEvents,
                 sourceTimeMs,
                 outputSize
             );
