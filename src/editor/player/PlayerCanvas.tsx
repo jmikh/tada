@@ -38,7 +38,7 @@ export const PlayerCanvas = () => {
 
                     // GAP SKIPPING LOGIC
                     const project = useProjectStore.getState().project;
-                    const windows = project.timeline.outputWindows; // Assumed sorted
+                    const windows = project.timeline.outputWindows; 
 
                     const activeWindow = windows.find(w => nextTime >= w.startMs && nextTime < w.endMs);
 
@@ -90,7 +90,6 @@ export const PlayerCanvas = () => {
         // Draw Background
         drawBackground(ctx, project.background, canvas, bgRef.current);
 
-        // ---------------- INLINED RENDER STATE LOGIC ----------------
         const { timeline, sources } = project;
         const { recording, outputWindows } = timeline;
 

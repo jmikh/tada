@@ -1,11 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { PlayerCanvas } from './player/PlayerCanvas';
 import { BackgroundPanel } from './BackgroundPanel';
-import { useProjectStore, useProjectData } from './stores/useProjectStore';
+import { useProjectStore, useProjectData, useProjectHistory } from './stores/useProjectStore';
 import { Timeline } from './timeline/Timeline';
 
 import { ProjectLibrary } from '../core/project/ProjectLibrary';
 
+// Icons
+const IconUndo = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 7v6h6" />
+        <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+    </svg>
+);
+
+const IconRedo = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 7v6h-6" />
+        <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 3.7" />
+    </svg>
+);
 
 
 function Editor() {
@@ -15,6 +29,11 @@ function Editor() {
     // -- Project State --
     const project = useProjectData();
     const loadProject = useProjectStore(s => s.loadProject);
+    const isSaving = useProjectStore(s => s.isSaving);
+    const undo = useProjectHistory(state => state.undo);
+    const redo = useProjectHistory(state => state.redo);
+    const pastStates = useProjectHistory(state => state.pastStates);
+    const futureStates = useProjectHistory(state => state.futureStates);
 
 
     // Initialization State
@@ -46,6 +65,22 @@ function Editor() {
 
         init();
     }, []);
+
+    // Global Key Listener for Undo/Redo
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+                if (e.shiftKey) {
+                    redo();
+                } else {
+                    undo();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undo, redo]);
 
 
     // Handle Resize for Centering
@@ -109,6 +144,50 @@ function Editor() {
 
     return (
         <div className="w-full h-screen bg-black flex flex-col overflow-hidden">
+
+            {/* Header / Toolbar */}
+            <div className="h-12 bg-[#252526] border-b border-[#333] flex items-center px-4 justify-between shrink-0 z-30 select-none">
+                <div className="flex items-center gap-4">
+                    <h1 className="font-bold text-gray-200 text-sm tracking-wide">RECORDO</h1>
+                    <div className="h-4 w-[1px] bg-[#444] mx-2"></div>
+
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => undo()}
+                            disabled={pastStates.length === 0}
+                            title="Undo (Cmd+Z)"
+                            className="p-2 text-gray-400 hover:text-white hover:bg-[#333] rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                        >
+                            <IconUndo />
+                        </button>
+                        <button
+                            onClick={() => redo()}
+                            disabled={futureStates.length === 0}
+                            title="Redo (Cmd+Shift+Z)"
+                            className="p-2 text-gray-400 hover:text-white hover:bg-[#333] rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                        >
+                            <IconRedo />
+                        </button>
+                    </div>
+
+                    <div className="text-[10px] text-gray-500 ml-4">
+                        {pastStates.length} / {futureStates.length}
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                    <div className="text-xs text-gray-500 flex items-center gap-2">
+                        {isSaving ? (
+                            <span className="text-blue-400">Saving...</span>
+                        ) : (
+                            <span className="text-gray-600">All changes saved</span>
+                        )}
+                    </div>
+                    {/* User Profile / Other Actions */}
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500"></div>
+                </div>
+            </div>
+
             <div className="flex-1 flex overflow-hidden">
                 <BackgroundPanel />
                 <div
@@ -142,6 +221,7 @@ function Editor() {
                         <h3 className="font-bold mb-2">Project: {project.name}</h3>
                         <div className="text-[10px] text-gray-500">ID: {project.id}</div>
                     </div>
+                    {/* Debug Buttons Removed */}
                     <div className="flex-1 flex flex-col overflow-hidden">
                         <div className="flex-1 flex flex-col overflow-hidden">
                             {/* Inspectors Removed */}

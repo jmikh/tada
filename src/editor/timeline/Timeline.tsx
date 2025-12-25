@@ -16,7 +16,7 @@ export function Timeline() {
     // -- Stores --
     const timeline = useProjectTimeline();
     const updateOutputWindow = useProjectStore(s => s.updateOutputWindow);
-    const addOutputWindow = useProjectStore(s => s.addOutputWindow);
+    const splitWindow = useProjectStore(s => s.splitWindow);
     const userEventsCache = useProjectStore(s => s.userEventsCache);
 
     const isPlaying = usePlaybackStore(s => s.isPlaying);
@@ -92,17 +92,8 @@ export function Timeline() {
 
         const win = timeline.outputWindows[activeWinIndex];
 
-        // 1. Shrink current window to end at split point
-        updateOutputWindow(win.id, { endMs: currentTimeMs });
-
-        // 2. Create new window starting at split point
-        // NOTE: We need a way to generate IDs safely. Using randomUUID for now.
-        const newWindow: OutputWindow = {
-            id: crypto.randomUUID(),
-            startMs: currentTimeMs,
-            endMs: win.endMs
-        };
-        addOutputWindow(newWindow);
+        // Atomic split action
+        splitWindow(win.id, currentTimeMs);
     };
 
     // --- Dragging Logic for Operating Windows ---

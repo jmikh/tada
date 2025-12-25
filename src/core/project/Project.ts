@@ -24,13 +24,13 @@ export class ProjectImpl {
                 frameRate: 30
             },
             zoom: {
-                maxZoom: 2.0,
+                maxZoom: 1.8,
                 auto: true
             },
             background: {
                 type: 'solid',
                 color: '#1e1e1e',
-                padding: 0.03
+                padding: 0.02
             }
         };
     }
@@ -124,9 +124,5 @@ export class ProjectImpl {
     }
 }
 
-/**
- * Resolves what should be rendered at a specific timeline time.
- * NOW REQUIRES ASSET CACHE to resolve events.
- */
 
 
