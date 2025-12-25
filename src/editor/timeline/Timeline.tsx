@@ -17,6 +17,7 @@ export function Timeline() {
     const timeline = useProjectTimeline();
     const updateOutputWindow = useProjectStore(s => s.updateOutputWindow);
     const addOutputWindow = useProjectStore(s => s.addOutputWindow);
+    const userEventsCache = useProjectStore(s => s.userEventsCache);
 
     const isPlaying = usePlaybackStore(s => s.isPlaying);
     const currentTimeMs = usePlaybackStore(s => s.currentTimeMs);
@@ -334,7 +335,7 @@ export function Timeline() {
                             <div className="absolute left-2 top-0 text-[10px] text-gray-500 font-mono pointer-events-none">EVENTS</div>
 
                             {/* Clicks */}
-                            {recording.clickEvents?.map((c, i) => {
+                            {userEventsCache[recording.screenSourceId]?.mouseClicks?.map((c, i) => {
                                 const timeMs = c.timestamp + timelineOffset;
                                 const left = (timeMs / 1000) * pixelsPerSec;
                                 return (
@@ -348,7 +349,7 @@ export function Timeline() {
                             })}
 
                             {/* Drags */}
-                            {recording.dragEvents?.map((d, i) => {
+                            {userEventsCache[recording.screenSourceId]?.drags?.map((d, i) => {
                                 // Assuming drag starts at d.timestamp and ends at last path point
                                 const startMs = d.timestamp + timelineOffset;
                                 const endMs = (d.path && d.path.length > 0)
@@ -368,7 +369,7 @@ export function Timeline() {
                             })}
 
                             {/* Keyboard Events */}
-                            {recording.keyboardEvents?.map((k, i) => {
+                            {userEventsCache[recording.screenSourceId]?.keyboardEvents?.map((k, i) => {
                                 const timeMs = k.timestamp + timelineOffset;
                                 const left = (timeMs / 1000) * pixelsPerSec;
                                 // Simple marker for now

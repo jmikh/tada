@@ -1,15 +1,16 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import type { Project, ID, Recording, OutputWindow } from '../../core/types';
+import type { Project, ID, Recording, OutputWindow, UserEvents } from '../../core/types';
 import { ProjectImpl } from '../../core/project/Project';
 import { ProjectLibrary } from '../../core/project/ProjectLibrary';
 
 interface ProjectState {
     project: Project;
+    userEventsCache: Record<ID, UserEvents>; // Cache of loaded events
     isSaving: boolean;
 
     // Actions
-    loadProject: (project: Project) => void;
+    loadProject: (project: Project) => Promise<void>;
     saveProject: () => Promise<void>;
 
     // Timeline Actions
@@ -23,11 +24,34 @@ interface ProjectState {
 export const useProjectStore = create<ProjectState>()(
     subscribeWithSelector((set, get) => ({
         // Initialize with a default empty project
-        // This will likely be overwritten immediately by App.tsx logic loading from IDB
         project: ProjectImpl.create('Untitled Project'),
+        userEventsCache: {},
         isSaving: false,
 
-        loadProject: (project) => set({ project }),
+        loadProject: async (project) => {
+            // 1. Set Project immediately
+            set({ project });
+
+            // 2. Fetch Events for all sources
+            const newCache: Record<ID, UserEvents> = {};
+            const promises = Object.values(project.sources).map(async (source) => {
+                if (source.eventsUrl) {
+                    try {
+                        const events = await ProjectLibrary.loadEvents(source.eventsUrl);
+                        newCache[source.id] = events;
+                    } catch (e) {
+                        console.error(`Failed to load events for source ${source.id}`, e);
+                        // Initialize empty if failed to avoid crashes
+                        newCache[source.id] = { mouseClicks: [], keyboardEvents: [], mousePositions: [], drags: [] };
+                    }
+                }
+            });
+
+            await Promise.all(promises);
+
+            // 3. Update Cache
+            set({ userEventsCache: newCache });
+        },
 
         saveProject: async () => {
             set({ isSaving: true });

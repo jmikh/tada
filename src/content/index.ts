@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { type Size, EventType } from '../core/types';
+import { type Size, EventType, type TimestampedPoint } from '../core/types';
 
 // Prevent duplicate injection
 if ((window as any).hasRecordoInjected) {
@@ -91,39 +91,21 @@ const captureOptions = { capture: true };
 
 
 
-function sendMouseEvent(type: 'MOUSEDOWN' | 'MOUSEUP', e?: MouseEvent) {
-    const x = e ? e.clientX : 0;
-    const y = e ? e.clientY : 0;
-
-    let elementMeta: Partial<Size> = {};
-    if (e && e.target instanceof Element) {
-        const rect = e.target.getBoundingClientRect();
-        elementMeta = {
-            width: rect.width,
-            height: rect.height
-        };
-    }
-
-    console.log(`[Content] Sending ${type} at (${x},${y})`);
-
-    sendMessageToBackground(type, {
-        timestamp: Date.now(),
-        x,
-        y,
-        ...elementMeta,
-    });
-}
 
 document.addEventListener('mousemove', (e) => {
+    if (!isRecording) return;
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
 }, captureOptions);
 
 // Click Synthesis State
 let bufferedMouseDown: { event: any, timestamp: number } | null = null;
+let dragPath: TimestampedPoint[] = [];
 const CLICK_THRESHOLD = 500; // ms
+const DRAG_DISTANCE_THRESHOLD = 5; // px
 
 document.addEventListener('pointerdown', (e) => {
+    if (!isRecording) return;
     // console.log("[Content] pointerdown");
     // Buffer the mousedown event
     const x = e.clientX;
@@ -137,47 +119,54 @@ document.addEventListener('pointerdown', (e) => {
         };
     }
 
+    const now = Date.now();
     bufferedMouseDown = {
         event: {
             x,
             y,
             ...elementMeta,
         },
-        timestamp: Date.now()
+        timestamp: now
     };
+
+    // Start tracking path
+    dragPath = [{ x, y, timestamp: now }];
+
 }, captureOptions);
 
+
+
 document.addEventListener('pointerup', (e) => {
-    // console.log("[Content] pointerup");
-
-    if (bufferedMouseDown) {
-        const now = Date.now();
-        const diff = now - bufferedMouseDown.timestamp;
-
-        if (diff <= CLICK_THRESHOLD) {
-            // Synthesize CLICK
-            // We use the timestamp of the MOUSE DOWN for consistency with where the action started?
-            // User requested: "send the click event with timestamp of mouse down"
-            sendMessageToBackground(EventType.CLICK, {
-                ...bufferedMouseDown.event,
-                timestamp: bufferedMouseDown.timestamp
-            });
-        } else {
-            // Send split events: stored MOUSE DOWN then MOUSE UP
-            sendMessageToBackground(EventType.MOUSEDOWN, {
-                ...bufferedMouseDown.event,
-                timestamp: bufferedMouseDown.timestamp
-            });
-
-            sendMouseEvent('MOUSEUP', e);
-        }
-
-        // Clear buffer
-        bufferedMouseDown = null;
-    } else {
-        // Orphaned mouseup (maybe mousedown happened before inject?), just send it
-        sendMouseEvent('MOUSEUP', e);
+    if (!bufferedMouseDown) {
+        // Orphaned mouseup, ignore or handle if critical. 
+        return;
     }
+    const now = Date.now();
+    const diff = now - bufferedMouseDown.timestamp;
+
+    // Calculate distance moved
+    const startPt = dragPath[0];
+    const dx = e.clientX - startPt.x;
+    const dy = e.clientY - startPt.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (diff <= CLICK_THRESHOLD && dist < DRAG_DISTANCE_THRESHOLD) {
+        sendMessageToBackground(EventType.CLICK, {
+            ...bufferedMouseDown.event,
+            timestamp: bufferedMouseDown.timestamp
+        });
+    } else {
+        dragPath.push({ x: e.clientX, y: e.clientY, timestamp: now });
+
+        sendMessageToBackground(EventType.MOUSEDRAG, {
+            timestamp: bufferedMouseDown.timestamp, // Start time
+            path: dragPath
+        });
+    }
+
+    // Clear buffer
+    bufferedMouseDown = null;
+    dragPath = [];
 }, captureOptions);
 
 // Helper to safely send messages
@@ -221,6 +210,7 @@ function sendMessageToBackground(type: string, payload: any) {
 // Poll for mouse position
 setInterval(() => {
     if (!chrome.runtime?.id) return; // Stop polling if invalidated
+    if (!isRecording) return;
 
     const now = Date.now();
     if (now - lastMouseTime >= MOUSE_POLL_INTERVAL) {
@@ -231,11 +221,21 @@ setInterval(() => {
             x: lastMouseX,
             y: lastMouseY,
         });
+
+        // If dragging, record point
+        if (bufferedMouseDown) {
+            dragPath.push({
+                x: lastMouseX,
+                y: lastMouseY,
+                timestamp: now
+            });
+        }
     }
 }, MOUSE_POLL_INTERVAL);
 
 // URL Capture
 function sendUrlEvent() {
+    if (!isRecording) return;
     sendMessageToBackground(EventType.URLCHANGE, {
         timestamp: Date.now(),
         url: window.location.href,
@@ -262,6 +262,7 @@ history.replaceState = function (...args) {
 // Key Capture
 window.addEventListener('keydown', (e) => {
     if (!chrome.runtime?.id) return;
+    if (!isRecording) return;
 
     const target = e.target as HTMLElement;
 
@@ -326,6 +327,7 @@ window.addEventListener('keydown', (e) => {
 // Scroll Capture
 let lastScrollTime = 0;
 window.addEventListener('scroll', (e) => {
+    if (!isRecording) return;
     // console.log("Scrolling"); 
     const now = Date.now();
     if (now - lastScrollTime < 500) {

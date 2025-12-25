@@ -46,7 +46,7 @@ export interface Project {
      * Map of all Source assets used in the project.
      * Keyed by Source ID for O(1) lookup.
      */
-    sources: Record<ID, Source>;
+    sources: Record<ID, SourceMetadata>;
 
     /* The main timeline containing the recording and output windows */
     timeline: Timeline;
@@ -72,12 +72,16 @@ export interface ZoomSettings {
 
 /**
  * Represents a raw media asset (File) that has been imported.
+ * Heavy event data is stored externally and referenced via eventsUrl.
  */
-export interface Source {
+export interface SourceMetadata {
     id: ID;
     type: 'video' | 'audio' | 'image';
     /** URL to the media file (blob or remote) */
     url: string;
+
+    // Pointer to the external JSON containing UserEvents
+    eventsUrl?: string;
 
     // Metadata
     /** Total duration of the source file in milliseconds */
@@ -86,8 +90,24 @@ export interface Source {
     /** Frames Per Second (Video only) */
     fps?: number;
     hasAudio: boolean;
-    events?: UserEvent[];
+    createdAt?: number;
 }
+
+// ==========================================
+// EXTERNAL USER EVENTS
+// ==========================================
+
+/**
+ * Structure of the external JSON file pointed to by SourceMetadata.eventsUrl.
+ * Contains raw recorded interactions categorized by type.
+ */
+export interface UserEvents {
+    mouseClicks: MouseEvent[];
+    mousePositions: MouseEvent[]; // mousepos
+    keyboardEvents: KeyboardEvent[];
+    drags: DragEvent[];
+}
+
 
 // ==========================================
 // TIMELINE
@@ -134,10 +154,6 @@ export interface Recording {
     screenSourceId: ID;
     cameraSourceId?: ID;
 
-    clickEvents: MouseEvent[];
-    dragEvents: DragEvent[];
-    keyboardEvents: KeyboardEvent[];
-
     viewportMotions: ViewportMotion[];
 }
 
@@ -175,8 +191,6 @@ export const EventType = {
     MOUSEPOS: 'mousepos',
     URLCHANGE: 'urlchange',
     KEYDOWN: 'keydown',
-    MOUSEDOWN: 'mousedown',
-    MOUSEUP: 'mouseup',
     HOVER: 'hover',
     MOUSEDRAG: 'mousedrag'
 } as const;
@@ -192,7 +206,7 @@ export interface BaseEvent {
 }
 
 export interface MouseEvent extends BaseEvent, Point {
-    type: typeof EventType.CLICK | typeof EventType.MOUSEPOS | typeof EventType.MOUSEDOWN | typeof EventType.MOUSEUP;
+    type: typeof EventType.CLICK | typeof EventType.MOUSEPOS;
 }
 
 export interface UrlEvent extends BaseEvent {

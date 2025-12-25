@@ -11,7 +11,7 @@ let activeStreams: MediaStream[] = [];
 let startTime = 0;
 let projectId: string | null = null;
 
-import type { Size } from '../core/types';
+import type { Size, SourceMetadata, UserEvents } from '../core/types';
 
 // Notify background that we are ready
 chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
@@ -173,7 +173,7 @@ function cleanup() {
     // Do not clear data here, we need to save it first
 }
 
-async function stopRecording(events: any[]) {
+async function stopRecording(events: UserEvents) {
     // 1. Stop Recorders
     const promises = [];
 
@@ -228,21 +228,25 @@ async function stopRecording(events: any[]) {
     if (screenData.length > 0) {
         const blob = new Blob(screenData, { type: 'video/webm' });
         const blobId = `rec-${projectId}-screen`;
+        const eventsBlobId = `evt-${projectId}-screen`;
         const sourceId = `src-${projectId}-screen`;
 
-        // Save Blob
+        // Save Video Blob
         await saveToIndexedDB('recording', blobId, blob, duration, projectId, screenDimensions);
 
+        // Save Events Blob
+        const eventsBlob = new Blob([JSON.stringify(events)], { type: 'application/json' });
+        await saveToIndexedDB('recording', eventsBlobId, eventsBlob, duration, projectId);
 
         // Save Source Metadata
-        const source = {
+        const source: SourceMetadata = {
             id: sourceId,
             type: 'video',
-            url: `recordo-blob://${blobId}`, // Virtual / Placeholder
+            url: `recordo-blob://${blobId}`,
+            eventsUrl: `recordo-blob://${eventsBlobId}`,
             durationMs: duration,
             size: screenDimensions || { width: 1920, height: 1080 },
             hasAudio: true,
-            events: events,
             createdAt: now
         };
         await saveToIndexedDB('source', sourceId, source, duration, projectId);
@@ -252,8 +256,23 @@ async function stopRecording(events: any[]) {
     if (cameraData.length > 0) {
         const blob = new Blob(cameraData, { type: 'video/webm' });
         const blobId = `rec-${projectId}-camera`;
-        // TODO: Save Camera Source/Events if needed
+        const sourceId = `src-${projectId}-camera`; // Create Source for Camera too
+
+        // Save Camera Blob
         await saveToIndexedDB('recording', blobId, blob, duration, projectId, cameraDimensions);
+
+        // Save Camera Source Metadata (No events usually)
+        const source: SourceMetadata = {
+            id: sourceId,
+            type: 'video',
+            url: `recordo-blob://${blobId}`,
+            // eventsUrl: ... camera usually has no interaction events
+            durationMs: duration,
+            size: cameraDimensions || { width: 1280, height: 720 }, // Fallback
+            hasAudio: false, // Audio is mixed into screen usually, or check config
+            createdAt: now
+        };
+        await saveToIndexedDB('source', sourceId, source, duration, projectId);
     }
 
     // 3. Cleanup & Notify

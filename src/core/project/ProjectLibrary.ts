@@ -1,5 +1,5 @@
 
-import type { ID, Project, Source } from '../types';
+import type { ID, Project, SourceMetadata } from '../types';
 import { ProjectImpl } from './Project';
 
 const DB_NAME = 'RecordoDB';
@@ -72,33 +72,49 @@ export class ProjectLibrary {
 
         if (screenSource) {
             console.log(`[ProjectLibrary] Found screen source for project ${projectId}.`);
-            return ProjectImpl.createFromSource(projectId, screenSource, cameraSource);
+
+            // Fetch initial events for ViewportMotion calculation
+            let screenEvents: any = { mouseClicks: [], keyboardEvents: [], mousePositions: [], drags: [] };
+            if (screenSource.eventsUrl) {
+                try {
+                    screenEvents = await this.loadEvents(screenSource.eventsUrl);
+                } catch (e) {
+                    console.error("Failed to load initial events for project creation", e);
+                }
+            }
+
+            return ProjectImpl.createFromSource(projectId, screenSource, screenEvents, cameraSource);
         }
 
         throw new Error(`Project ${projectId} not found and no matching source found.`);
     }
 
     /**
+     * Loads UserEvents from a URL, handling special 'recordo-blob://' protocol.
+     */
+    static async loadEvents(url: string): Promise<any> {
+        if (url.startsWith('recordo-blob://')) {
+            const blobId = url.replace('recordo-blob://', '');
+            const blob = await this.getRecordingBlob(blobId);
+            if (!blob) throw new Error(`Event blob not found: ${blobId}`);
+
+            const text = await blob.text();
+            return JSON.parse(text);
+        } else {
+            const resp = await fetch(url);
+            return await resp.json();
+        }
+    }
+
+    /**
      * Saves the project to the 'projects' store.
-     * IMPORTANT: this strips/optimizes the project before saving to avoid duplicating
-     * heavy immutable source data that is already in 'sources' store.
      */
     static async saveProject(project: Project): Promise<void> {
         const db = await this.getDB();
 
-        // Optimize: Strip 'events' from the references in project.sources
-        // The project has its own copy of events in project.timeline.recording
-        const lightweightSources: Record<ID, Source> = {};
-        for (const [id, source] of Object.entries(project.sources)) {
-            // Create a shallow copy without heavy events
-            const { events, ...metadata } = source;
-            lightweightSources[id] = metadata as Source;
-        }
-
-        const projectToSave = {
-            ...project,
-            sources: lightweightSources
-        };
+        // Project contains SourceMetadata which is already lightweight (no heavy events).
+        // We can save directly.
+        const projectToSave = project;
 
         return new Promise((resolve, reject) => {
             const tx = db.transaction('projects', 'readwrite');
@@ -127,17 +143,7 @@ export class ProjectLibrary {
         if (!projectRaw) return null;
 
         // Re-hydrate sources? 
-        // Actually, since we stripped events from project.sources, we might want to reload them
-        // if the editor expects source.events to be present.
-        // However, the Editor uses project.timeline.recording.events for editing.
-        // The raw source events are reference.
-        // If we need them, we load them. For now, let's assume we don't strictly need 
-        // the raw source events in memory unless we are "resetting" the project.
-        // Implementation Decision: Keep them light in IDB, load on demand?
-        // To be safe and consistent with types, valid Source should have events if they exist.
-        // Let's reload them to ensure full consistency.
-
-        const hydratedSources: Record<ID, Source> = {};
+        const hydratedSources: Record<ID, SourceMetadata> = {};
         for (const [id, sourceStub] of Object.entries(projectRaw.sources)) {
             const fullSource = await this.loadSource(id);
             if (fullSource) {
@@ -157,7 +163,7 @@ export class ProjectLibrary {
     // SOURCE HELPER
     // ===========================================
 
-    static async saveSource(source: Source): Promise<void> {
+    static async saveSource(source: SourceMetadata): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction('sources', 'readwrite');
@@ -168,9 +174,9 @@ export class ProjectLibrary {
         });
     }
 
-    static async loadSource(sourceId: ID): Promise<Source | undefined> {
+    static async loadSource(sourceId: ID): Promise<SourceMetadata | undefined> {
         const db = await this.getDB();
-        const source = await new Promise<Source | undefined>((resolve, reject) => {
+        const source = await new Promise<SourceMetadata | undefined>((resolve, reject) => {
             const tx = db.transaction('sources', 'readonly');
             const store = tx.objectStore('sources');
             const req = store.get(sourceId);

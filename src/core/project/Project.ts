@@ -1,34 +1,8 @@
-import { EventType, type MouseEvent, type Project, type Recording, type Source, type UserEvent, type ID, type TimeMs, type OutputWindow } from '../types';
+import { type Project, type SourceMetadata, type UserEvents, type Recording, type ID } from '../types';
 import { TimelineImpl } from '../timeline/Timeline';
-import { mapTimelineToOutputTime } from '../effects/timeMapper';
 import { calculateZoomSchedule, ViewMapper } from '../effects/viewportMotion';
 
-/**
- * Represents the resolved state of the timeline at a specific point in time.
- * Used by the renderer (PlayerCanvas) to know what frame to draw.
- */
-export interface RenderState {
-    timeMs: TimeMs;
-    /** Whether the current time falls within an output window */
-    isActive: boolean;
 
-    /** The calculated output time (gapless video time) */
-    outputTimeMs: TimeMs;
-
-    /** The calculated source time */
-    sourceTimeMs: TimeMs;
-
-    /** The recording to render */
-    recording: Recording;
-
-    /** Resolved Source objects */
-    screenSource?: Source;
-    cameraSource?: Source; // Future proofing
-
-    // Context for effects mapping
-    outputWindows: OutputWindow[];
-    timelineOffsetMs: TimeMs;
-}
 
 /**
  * Functional logic for Project operations.
@@ -38,7 +12,6 @@ export class ProjectImpl {
      * Initializes a new Project with default structure.
      */
     static create(name: string = "New Project"): Project {
-        // Need a placeholder source ID or empty
         return {
             id: crypto.randomUUID(),
             name,
@@ -63,14 +36,20 @@ export class ProjectImpl {
     }
 
     /**
-     * Creates a new Project initialized from a recorded Source.
-     * Copies the source events into the timeline's recording.
-     */
-    /**
      * Creates a new Project initialized from specific sources.
      * Takes a mandatory screen source and an optional camera source.
+     * 
+     * NOTE: This assumes the UserEvents are already saved externally and referenced by the SourceMetadata.
+     * We do NOT copy events into the project anymore.
+     * However, for ViewportMotion calculation (auto-zoom), we NEED the events.
+     * So we pass them in as arguments just for calculation (not storage).
      */
-    static createFromSource(projectId: ID, screenSource: Source, cameraSource?: Source): Project {
+    static createFromSource(
+        projectId: ID,
+        screenSource: SourceMetadata,
+        screenEvents: UserEvents, // Required for calculating zooms
+        cameraSource?: SourceMetadata
+    ): Project {
         const project = this.create("Recording - " + new Date().toLocaleString());
         project.id = projectId; // Override random ID with specific projectId
 
@@ -103,34 +82,17 @@ export class ProjectImpl {
         const viewportMotions = calculateZoomSchedule(
             project.zoom.maxZoom,
             viewMapper,
-            screenSource.events as UserEvent[] || [],
+            screenEvents,
             outputWindows,
             0 // timelineOffsetMs
         );
-
-        // Setup the recording in the timeline
-        // We populate the Recording with events from the SCREEN source (primary interaction)
 
         const recording: Recording = {
             timelineOffsetMs: 0,
             screenSourceId: screenSource.id,
             cameraSourceId: cameraSource?.id,
-
-            // Map UserEvent[] to specific event arrays
-            clickEvents: [],
-            dragEvents: [],
-            keyboardEvents: [],
             viewportMotions: viewportMotions
         };
-
-        if (screenSource.events) {
-            screenSource.events.forEach(e => {
-                if (e.type === EventType.CLICK) recording.clickEvents.push(e as MouseEvent);
-                else if (e.type === EventType.KEYDOWN) recording.keyboardEvents.push(e as any);
-                // @ts-ignore
-                else if (e.type === EventType.MOUSEDRAG) recording.dragEvents.push(e as any);
-            });
-        }
 
         // Update timeline with this recording
         const updatedTimeline = {
@@ -151,7 +113,7 @@ export class ProjectImpl {
     /**
      * Adds a media source to the project library.
      */
-    static addSource(project: Project, source: Source): Project {
+    static addSource(project: Project, source: SourceMetadata): Project {
         return {
             ...project,
             sources: {
@@ -160,41 +122,11 @@ export class ProjectImpl {
             }
         };
     }
-
-    /**
-     * Resolves what should be rendered at a specific timeline time.
-     */
-    static getRenderState(project: Project, timeMs: TimeMs): RenderState {
-        const { timeline, sources } = project;
-        const { recording, outputWindows } = timeline;
-
-        // 1. Check if time is in any output window
-        // Windows are ordered and non-overlapping.
-        // We can optimize search, but linear is fine for now.
-        const activeWindow = outputWindows.find(w => timeMs >= w.startMs && timeMs < w.endMs);
-        const isActive = !!activeWindow;
-
-        // 2. Calculate Source Time
-        // Source Time = Timeline Time - Recording Offset (Source 0 is at offset)
-        const sourceTimeMs = timeMs - recording.timelineOffsetMs;
-
-        // 3. Calculate Output Time (for effects)
-        const outputTimeMs = mapTimelineToOutputTime(timeMs, outputWindows);
-
-        // 4. Resolve Sources
-        const screenSource = sources[recording.screenSourceId];
-        const cameraSource = recording.cameraSourceId ? sources[recording.cameraSourceId] : undefined;
-
-        return {
-            timeMs,
-            isActive,
-            outputTimeMs,
-            sourceTimeMs,
-            recording,
-            screenSource,
-            cameraSource,
-            outputWindows,
-            timelineOffsetMs: recording.timelineOffsetMs
-        };
-    }
 }
+
+/**
+ * Resolves what should be rendered at a specific timeline time.
+ * NOW REQUIRES ASSET CACHE to resolve events.
+ */
+
+

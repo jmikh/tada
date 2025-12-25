@@ -1,54 +1,57 @@
-
-import type { Size } from '../../core/types';
-import type { RenderState } from '../../core/project/Project';
+import type { UserEvents, Project, ID, TimeMs } from '../../core/types';
 import { ViewMapper } from '../../core/effects/viewMapper';
-import { getViewportStateAtTime } from '../../core/effects/viewportMotion';
 import { paintMouseClicks } from './mouseClickPainter';
 import { drawDragEffects } from './mouseDragPainter';
+import { mapTimelineToOutputTime } from '../../core/effects/timeMapper';
+import { getViewportStateAtTime } from '../../core/effects/viewportMotion';
 
 /**
- * Draws the screen recording frame, applying viewport transformations and mouse effects.
+ * Draws the screen recording frame.
+ * Encapsulates logic for viewport calculation and event lookup.
  */
 export function drawScreen(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
-    renderState: RenderState,
-    outputSize: Size,
-    padding: number
+    project: Project,
+    userEventsCache: Record<ID, UserEvents>,
+    currentTimeMs: TimeMs
 ) {
-    const { screenSource, recording, sourceTimeMs } = renderState;
+    const { timeline, sources, outputSettings, background } = project;
+    const { recording, outputWindows } = timeline;
+
+    // 1. Resolve Data
+    const screenSource = sources[recording.screenSourceId];
     if (!screenSource) return;
 
+    // 2. Calculate Times
+    // Source Time: time relative to the video file
+    const sourceTimeMs = currentTimeMs - recording.timelineOffsetMs;
+    // Output Time: time relative to the gapless output video
+    const outputTimeMs = mapTimelineToOutputTime(currentTimeMs, outputWindows);
+
+    // 3. Resolve Viewport
+    const viewportMotions = recording.viewportMotions || [];
+    const effectiveViewport = getViewportStateAtTime(
+        viewportMotions,
+        outputTimeMs, // Use Output Time for Viewport motion (smoothness)
+        outputSettings.size,
+        outputWindows,
+        recording.timelineOffsetMs
+    );
+
     // Use video dimensions if available, otherwise source metadata
+    // Note: Video dimensions might be 0 if not loaded, fallback to metadata size
     const inputSize = video.videoWidth && video.videoHeight
         ? { width: video.videoWidth, height: video.videoHeight }
         : screenSource.size;
 
-    if (!inputSize) return;
+    if (!inputSize || inputSize.width === 0) return;
 
-    const paddingPercentage = padding;
+    // 4. Resolve View Mapping
+    const viewMapper = new ViewMapper(inputSize, outputSettings.size, background.padding ?? 0.1);
 
-    // 1. Calculate Viewport (Output Space)
-    const viewMapper = new ViewMapper(inputSize, outputSize, paddingPercentage);
-    const viewportMotions = recording.viewportMotions || [];
-
-    // Calculate effective viewport using output time (gapless time)
-    // We assume renderState has been augmented with outputTimeMs
-    const outputTimeMs = renderState.outputTimeMs || 0;
-
-    // Calculate the effective viewport at the current playback time (Output Time)
-    // We pass the context (windows/offset) so the function can map Source->Output internally
-    const effectiveViewport = getViewportStateAtTime(
-        viewportMotions,
-        outputTimeMs,
-        outputSize,
-        renderState.outputWindows,
-        renderState.timelineOffsetMs
-    );
-
-    // 2. Resolve render rectangles (Source -> Dest)
+    // 5. Draw Video
     const renderRects = viewMapper.resolveRenderRects(effectiveViewport);
-
     if (renderRects) {
         ctx.drawImage(
             video,
@@ -57,11 +60,15 @@ export function drawScreen(
         );
     }
 
-    // 3. Draw Mouse Effects Overlay
-    if (recording.clickEvents) {
-        paintMouseClicks(ctx, recording.clickEvents, sourceTimeMs, effectiveViewport, viewMapper);
-    }
-    if (recording.dragEvents) {
-        drawDragEffects(ctx, recording.dragEvents, sourceTimeMs, effectiveViewport, viewMapper);
+    // 6. Draw Mouse Effects Overlay
+    const activeEvents = userEventsCache[recording.screenSourceId];
+    if (activeEvents) {
+        // These painters use Source Time because events are recorded in Source Time
+        if (activeEvents.mouseClicks) {
+            paintMouseClicks(ctx, activeEvents.mouseClicks, sourceTimeMs, effectiveViewport, viewMapper);
+        }
+        if (activeEvents.drags) {
+            drawDragEffects(ctx, activeEvents.drags, sourceTimeMs, effectiveViewport, viewMapper);
+        }
     }
 }

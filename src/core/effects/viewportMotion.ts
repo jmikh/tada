@@ -1,7 +1,7 @@
-import { type UserEvent, type ViewportMotion, type Size, type MouseEvent, type Rect, EventType } from '../types';
-import { ViewMapper } from './viewMapper.ts';
+import { type UserEvent, type UserEvents, type ViewportMotion, type Size, type MouseEvent, type Rect, EventType } from '../types';
+import { ViewMapper } from './viewMapper';
 
-export * from './viewMapper.ts';
+export * from './viewMapper';
 
 // ============================================================================
 // Core Abstractions
@@ -13,14 +13,14 @@ export * from './viewMapper.ts';
  * Returns these periods as synthetic 'HoverEvents'.
  */
 function findHoverEvents(
-    events: UserEvent[],
+    events: UserEvents,
     inputSize: Size
 ): UserEvent[] {
     const boxSize = Math.max(inputSize.width, inputSize.height) * 0.1;
     const minDuration = 1000;
 
     const hoverEvents: UserEvent[] = [];
-    let currentSegment: MouseEvent[] = [];
+
 
     const processSegment = (segment: MouseEvent[]) => {
         let i = 0;
@@ -76,20 +76,9 @@ function findHoverEvents(
         }
     };
 
-    for (const evt of events) {
-        if (evt.type === EventType.MOUSEPOS) {
-            currentSegment.push(evt as MouseEvent);
-        } else if ((evt as any).type === 'click' || (evt as any).type === 'url') {
-            if (currentSegment.length > 0) {
-                processSegment(currentSegment);
-                currentSegment = [];
-            }
-        }
-    }
-
-
-    if (currentSegment.length > 0) {
-        processSegment(currentSegment);
+    // Use mousePositions from UserEvents
+    if (events.mousePositions) {
+        processSegment(events.mousePositions);
     }
 
     return hoverEvents;
@@ -102,44 +91,46 @@ import type { OutputWindow } from '../types';
 export function calculateZoomSchedule(
     maxZoom: number,
     viewMapper: ViewMapper,
-    events: UserEvent[],
+    events: UserEvents,
     outputWindows: OutputWindow[],
     timelineOffsetMs: number
 ): ViewportMotion[] {
     const motions: ViewportMotion[] = [];
 
+    // Filter & map relevant events (clicks) to Output Time
+    const mappedClicks: UserEvent[] = [];
 
-
-    if (events.length === 0) return motions;
-
-    // Filter & map ALL events to Output Time first to ensure that hover detection and zoom scheduling happen on the "final cut"
-    const mappedEvents: UserEvent[] = [];
-
-    console.log('[ZoomDebug] Raw events:', events.length);
-    console.log('[ZoomDebug] Windows:', outputWindows);
-    console.log('[ZoomDebug] Offset:', timelineOffsetMs);
-
-    for (const evt of events) {
-        const outputTime = mapSourceToOutputTime(evt.timestamp, outputWindows, timelineOffsetMs);
-        if (outputTime !== -1 && outputTime > 1500) {
-            // don't zoom until 1.5 seconds in
-            const mapped = { ...evt, timestamp: outputTime };
-            mappedEvents.push(mapped);
+    // Process Clicks
+    if (events.mouseClicks) {
+        for (const evt of events.mouseClicks) {
+            const outputTime = mapSourceToOutputTime(evt.timestamp, outputWindows, timelineOffsetMs);
+            if (outputTime !== -1 && outputTime > 1500) {
+                const mapped = { ...evt, timestamp: outputTime };
+                mappedClicks.push(mapped as UserEvent);
+            }
         }
     }
 
-    // Detect Hovers in Output Space
-    // Now that events are in continuous Output Time, findHoverEvents will correctly 
-    // detect hovers even across cuts if the mouse position is stable.
-    const hoverEvents = findHoverEvents(mappedEvents as UserEvent[], viewMapper.inputVideoSize);
+    // Find Hovers in Source Space
+    const sourceHoverEvents = findHoverEvents(events, viewMapper.inputVideoSize);
+
+    // Map Hovers to Output Space
+    const mappedHovers: UserEvent[] = [];
+    for (const evt of sourceHoverEvents) {
+        const outputTime = mapSourceToOutputTime(evt.timestamp, outputWindows, timelineOffsetMs);
+        if (outputTime !== -1 && outputTime > 1500) {
+            const mapped = { ...evt, timestamp: outputTime };
+            mappedHovers.push(mapped);
+        }
+    }
 
     // Merge Clicks and Hovers
     const relevantEvents = [
-        ...mappedEvents.filter((e: any) => e.type === 'click'),
-        ...hoverEvents
+        ...mappedClicks,
+        ...mappedHovers
     ].sort((a: any, b: any) => a.timestamp - b.timestamp);
 
-    console.log('[ZoomDebug] Relevant events (Output Time):', relevantEvents.length);
+    // console.log('[ZoomDebug] Relevant events (Output Time):', relevantEvents.length);
 
     const zoomLevel = maxZoom;
     const targetWidth = viewMapper.outputVideoSize.width / zoomLevel;
@@ -235,10 +226,6 @@ export function getViewportStateAtTime(
 ): Rect {
     const fullRect: Rect = { x: 0, y: 0, width: outputSize.width, height: outputSize.height };
 
-    if (!motions || motions.length === 0) {
-        return fullRect;
-    }
-
     let currentRect = fullRect;
 
     // TODO: handle zoom overlaps here when allow users to add zooms they might overlap and we don't want to jump. easy way if multiple zooms overlap select the later one.
@@ -253,13 +240,14 @@ export function getViewportStateAtTime(
                 // Inside transition (Smooth interpolation in Output Time)
                 const progress = (outputTimeMs - startTime) / motion.durationMs;
                 const eased = applyEasing(progress);
-                return interpolateRect(currentRect, motion.rect, eased);
+                currentRect = interpolateRect(currentRect, motion.rect, eased);
+                break; // Found the active transition
             } else if (outputTimeMs < startTime) {
                 // Not reached this transition yet
-                // Since we are processing in order, we stop and return the current state
-                return currentRect;
+                // Since we are processing in order, we stop and return the current state (which is the previous motion end or full rect)
+                break;
             }
-            // Else: We passed this transition. Update currentRect.
+            // Else: We passed this transition. Update currentRect to this motion's end state and continue.
             currentRect = motion.rect;
 
         } else {

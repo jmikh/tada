@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { type Size, type UserEvent, type DragEvent, EventType } from '../core/types';
+import { type Size, EventType, type UserEvents, type MouseEvent, type KeyboardEvent, type DragEvent } from '../core/types';
 
 logger.log("Background service worker running");
 
@@ -49,6 +49,36 @@ chrome.runtime.onInstalled.addListener(async () => {
         }
     }
 });
+
+function categorizeEvents(events: any[]): UserEvents {
+    const categorized: UserEvents = {
+        mouseClicks: [],
+        mousePositions: [],
+        keyboardEvents: [],
+        drags: []
+    };
+
+    for (const e of events) {
+        switch (e.type) {
+            case EventType.CLICK:
+                categorized.mouseClicks.push(e as MouseEvent);
+                break;
+            case EventType.MOUSEPOS:
+                categorized.mousePositions.push(e as MouseEvent);
+                break;
+            case EventType.KEYDOWN:
+                categorized.keyboardEvents.push(e as KeyboardEvent);
+                break;
+            case EventType.MOUSEDRAG:
+                categorized.drags.push(e as DragEvent);
+                break;
+            default:
+                // Ignore unknown types
+                break;
+        }
+    }
+    return categorized;
+}
 
 // Event Listener
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -230,21 +260,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         })();
         return true; // Keep channel open
     } else if (message.type === 'STOP_RECORDING') {
-        // Sort events by timestamp to ensure chronological order (buffered events might arrive late)
-        state.events.sort((a, b) => a.timestamp - b.timestamp);
-
-        // Calculate Drag Events from raw mouse events
-        const dragEvents = calculateDragEvents(state.events as UserEvent[]);
-        state.events.push(...dragEvents);
-
+        // Sort events by timestamp
         state.events.sort((a, b) => a.timestamp - b.timestamp);
 
         logger.log("[Background] Saving final events:", state.events.length);
         chrome.storage.local.set({ recordingMetadata: state.events });
 
+        const userEvents = categorizeEvents(state.events);
+
         chrome.runtime.sendMessage({
             type: 'STOP_RECORDING_OFFSCREEN',
-            events: state.events
+            events: userEvents // Send categorized object instead of raw array
         });
         state.isRecording = false;
 
@@ -254,40 +280,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 });
 
-function calculateDragEvents(events: UserEvent[]): DragEvent[] {
-    const dragEvents: DragEvent[] = [];
 
-    if (!events || events.length === 0) return dragEvents;
-
-    // Identify Drags (mousedown -> moves -> mouseup)
-    let activeDrag: DragEvent | null = null;
-
-    for (const evt of events) {
-        if (evt.type === EventType.MOUSEDOWN) {
-            if (activeDrag) {
-                // Unexpected mousedown while dragging? Ignore or reset?
-                continue;
-            }
-            activeDrag = {
-                timestamp: evt.timestamp,
-                type: EventType.MOUSEDRAG,
-                path: [{ timestamp: evt.timestamp, x: evt.x, y: evt.y }]
-            };
-        } else if (evt.type === EventType.MOUSEPOS && activeDrag) {
-            // Mouse move during drag
-            activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
-        } else if (evt.type === EventType.MOUSEUP && activeDrag) {
-            // End Drag
-            activeDrag.path.push({ timestamp: evt.timestamp, x: evt.x, y: evt.y });
-            dragEvents.push(activeDrag);
-            activeDrag = null;
-        }
-    }
-
-    // Close any trailing drag
-    if (activeDrag) {
-        dragEvents.push(activeDrag);
-    }
-
-    return dragEvents;
-}

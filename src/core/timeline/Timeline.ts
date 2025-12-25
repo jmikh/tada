@@ -15,9 +15,6 @@ export class TimelineImpl {
             recording: {
                 timelineOffsetMs: 0,
                 screenSourceId: defaultScreenSourceId,
-                clickEvents: [],
-                dragEvents: [],
-                keyboardEvents: [],
                 viewportMotions: []
             }
         };

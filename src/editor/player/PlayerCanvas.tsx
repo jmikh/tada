@@ -5,8 +5,6 @@ import { drawWebcam } from './webcamPainter';
 import { drawKeyboardOverlay } from './keyboardPainter';
 import { useProjectStore, useProjectData } from '../stores/useProjectStore';
 import { usePlaybackStore } from '../stores/usePlaybackStore';
-import { ProjectImpl } from '../../core/project/Project';
-
 
 export const PlayerCanvas = () => {
     const project = useProjectData();
@@ -42,8 +40,6 @@ export const PlayerCanvas = () => {
                     const project = useProjectStore.getState().project;
                     const windows = project.timeline.outputWindows; // Assumed sorted
 
-                    // Check if inside any window
-                    // TODO [Optimization]: could keep track of current window index, but linear scan is fine for small N
                     const activeWindow = windows.find(w => nextTime >= w.startMs && nextTime < w.endMs);
 
                     if (!activeWindow) {
@@ -82,10 +78,9 @@ export const PlayerCanvas = () => {
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx) return;
 
-        const state = useProjectStore.getState();
+        const { project, userEventsCache } = useProjectStore.getState();
         const playback = usePlaybackStore.getState();
 
-        const project = state.project;
         const currentTimeMs = playback.currentTimeMs;
         const outputSize = project.outputSettings.size;
 
@@ -95,52 +90,64 @@ export const PlayerCanvas = () => {
         // Draw Background
         drawBackground(ctx, project.background, canvas, bgRef.current);
 
-        // Resolve Render State
-        let renderState;
-        try {
-            renderState = ProjectImpl.getRenderState(project, currentTimeMs);
-        } catch {
-            console.error('Failed to get render state');
+        // ---------------- INLINED RENDER STATE LOGIC ----------------
+        const { timeline, sources } = project;
+        const { recording, outputWindows } = timeline;
+
+        // 1. Check if ACTIVE
+        const activeWindow = outputWindows.find(w => currentTimeMs >= w.startMs && currentTimeMs < w.endMs);
+        if (!activeWindow) {
+            // Not in output window. 
+            // We might want to draw nothing, or just valid background.
+            // Returning here means screen/camera layers are skipped.
             return;
         }
 
-        if (!renderState.isActive) {
-            // Not in an output window or no source, showing background only
-            // TODO [MUST FIX]: we should show the screens even if no output window. we might just need to skip all the zooming logic? figure it out later
-            return;
-        }
+        // 2. Calculate Times
+        // We still need sourceTimeMs here to sync the video elements
+        const sourceTimeMs = currentTimeMs - recording.timelineOffsetMs;
+
+        // 3. Resolve Items
+        const screenSource = sources[recording.screenSourceId];
+        const cameraSource = recording.cameraSourceId ? sources[recording.cameraSourceId] : undefined;
+        const activeEvents = userEventsCache[recording.screenSourceId];
+
+        // -----------------------------------------------------------
 
         // Render Screen Layer
-        if (renderState.screenSource) {
-            const source = renderState.screenSource;
-            const video = internalVideoRefs.current[source.id];
+        if (screenSource) {
+            const video = internalVideoRefs.current[screenSource.id];
             if (video) {
-                syncVideo(video, renderState.sourceTimeMs / 1000, playback.isPlaying);
-                drawScreen(ctx, video, renderState, outputSize, project.background.padding ?? 0.1);
+                syncVideo(video, sourceTimeMs / 1000, playback.isPlaying);
+
+                drawScreen(
+                    ctx,
+                    video,
+                    project,
+                    userEventsCache,
+                    currentTimeMs
+                );
             } else {
-                console.error(`[PlayerCanvas] Missing video element for screen source: ${source.id}`);
+                // If video not ready, maybe draw black rect?
             }
         }
 
         // Render Webcam Layer
-        if (renderState.cameraSource) {
-            const source = renderState.cameraSource;
-            const video = internalVideoRefs.current[source.id];
+        if (cameraSource) {
+            const video = internalVideoRefs.current[cameraSource.id];
             if (video) {
                 // Camera syncs to same time as screen source
-                syncVideo(video, renderState.sourceTimeMs / 1000, playback.isPlaying);
-                drawWebcam(ctx, video, outputSize, source.size);
-            } else {
-                console.error(`[PlayerCanvas] Missing video element for webcam source: ${source.id}`);
+                syncVideo(video, sourceTimeMs / 1000, playback.isPlaying);
+                drawWebcam(ctx, video, outputSize, cameraSource.size);
             }
         }
 
         // Render Keyboard Overlay
-        if (renderState.recording && renderState.recording.keyboardEvents) {
+        if (activeEvents && activeEvents.keyboardEvents) {
             drawKeyboardOverlay(
                 ctx,
-                renderState.recording.keyboardEvents,
-                renderState.sourceTimeMs,
+                activeEvents.keyboardEvents,
+                sourceTimeMs,
                 outputSize
             );
         }
