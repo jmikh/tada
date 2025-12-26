@@ -315,7 +315,7 @@ export function Timeline() {
                                         className="absolute top-1 bottom-1 bg-purple-900/60 border border-purple-500/50 rounded-sm"
                                         style={{ left: `${left}px`, width: `${Math.max(width, 2)}px` }}
                                     >
-                                        <div className="text-[9px] text-purple-200/50 px-1 truncate">Zoom</div>
+                                        <div className="text-[9px] text-purple-200/50 px-1 truncate">{m.reason}</div>
                                     </div>
                                 );
                             })}

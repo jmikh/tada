@@ -164,6 +164,7 @@ export interface ViewportMotion {
     sourceEndTimeMs: TimeMs;
     durationMs: TimeMs;
     rect: Rect;
+    reason: string;
 }
 
 /**

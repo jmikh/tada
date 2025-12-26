@@ -347,6 +347,59 @@ window.addEventListener('keydown', (e) => {
     }
 }, true); // Use Capture Phase to ensure we get events before site stops propagation
 
+/**
+ * Detects the effective scrollable area by probing the center of the screen.
+ * It finds the main content column by walking up from the center element.
+ * We look for the "outermost" container that is still smaller than the viewport.
+ */
+function getLayoutAwareViewport(): Rect {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+
+    let el = document.elementFromPoint(cx, cy);
+
+    // Default to full window
+    let bestRect: Rect = {
+        x: 0,
+        y: 0,
+        width: window.innerWidth,
+        height: window.innerHeight
+    };
+    let chosenDiv: Element | null = null;
+    console.log("layoutAwareViewport center element:", el);
+
+    while (el && el !== document.body && el !== document.documentElement) {
+        const rect = el.getBoundingClientRect();
+
+        // Check if wider than 20% but narrower than full viewport
+        // (Use -1 tolerance for full width detection)
+        if (rect.width > window.innerWidth * 0.8) {
+            // Found a full-width container (or close to it). 
+            // Since parents can't be narrower than children usually, 
+            // any previous 'bestRect' was the outermost narrow one.
+            break;
+        }
+
+        if (rect.width > window.innerWidth * 0.2) {
+            // It is a valid candidate (narrower than viewport, but significant size)
+            // We update bestRect and keep going up to find a potentially wider/outer parent
+            // that is still within the narrow constraint.
+            bestRect = {
+                x: rect.left,
+                y: 0, // Assume full height for the scroll track
+                width: rect.width,
+                height: window.innerHeight
+            };
+            chosenDiv = el;
+        }
+
+        el = el.parentElement;
+    }
+
+    console.log("bestRect:", bestRect, chosenDiv);
+    return bestRect;
+}
+
 // Scroll Capture
 let lastScrollTime = 0;
 window.addEventListener('scroll', (e) => {
@@ -363,19 +416,20 @@ window.addEventListener('scroll', (e) => {
 
     if (!chrome.runtime?.id) return;
 
-    let boundingBox: Rect = {
-        x: 0,
-        y: 0,
-        width: window.innerWidth,
-        height: window.innerHeight
-    };
+    let boundingBox: Rect;
+
     if (e.target instanceof Element) {
         // It's a nested element scroll
         const rect = e.target.getBoundingClientRect();
-        boundingBox.x = rect.left;
-        boundingBox.y = rect.top;
-        boundingBox.width = rect.width;
-        boundingBox.height = rect.height;
+        boundingBox = {
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height
+        };
+    } else {
+        // Full Page Scroll - detect effective viewport
+        boundingBox = getLayoutAwareViewport();
     }
 
 

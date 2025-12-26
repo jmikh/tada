@@ -33,7 +33,7 @@ export const PlayerCanvas = () => {
             // FPS Counter
             frameCount++;
             if (time - lastFpsTime >= 1000) {
-                console.log(`[PlayerCanvas] tick FPS: ${frameCount}`);
+                // console.log(`[PlayerCanvas] tick FPS: ${frameCount}`);
                 frameCount = 0;
                 lastFpsTime = time;
             }

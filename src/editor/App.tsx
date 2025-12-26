@@ -220,6 +220,12 @@ function Editor() {
                     <div className="p-2 border-b border-[#333]">
                         <h3 className="font-bold mb-2">Project: {project.name}</h3>
                         <div className="text-[10px] text-gray-500">ID: {project.id}</div>
+                        <button
+                            className="mt-2 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded cursor-pointer"
+                            onClick={() => console.log(project)}
+                        >
+                            Log Project
+                        </button>
                     </div>
                     {/* Debug Buttons Removed */}
                     <div className="flex-1 flex flex-col overflow-hidden">

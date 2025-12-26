@@ -174,39 +174,52 @@ export function calculateZoomSchedule(
 
     for (let i = 0; i < relevantEvents.length; i++) {
         const evt = relevantEvents[i] as any;
-        if (evt.type == EventType.SCROLL) {
-            noZoomInUntilMs = evt.timestamp + 2000;
-        }
+
         let arrivalTime = evt.timestamp;
 
         // Calculate Target Viewport State
         const newViewport = createTargetViewport(evt, viewMapper, minViewportWidth);
+        console.log('[ZoomDebug] Event', evt, ' New Viewport', newViewport);
+
+        if (evt.type == EventType.SCROLL) {
+            noZoomInUntilMs = evt.timestamp + 2000;
+            console.log('[ZoomDebug] No Zoom In Until', noZoomInUntilMs);
+        }
 
         let duration = ZOOM_TRANSITION_DURATION;
 
 
-        if (lastViewport.width > newViewport.width && arrivalTime < noZoomInUntilMs && isPointInRect(evt.mousePos, lastViewport)) {
-            if (evt.type === EventType.HOVER) {
-                if (noZoomInUntilMs - HoverMinDurationMs < evt.endTime) {
-                    // We can delay the zoom to hover
-                    arrivalTime = noZoomInUntilMs;
+        if (isPointInRect(viewMapper.inputToOutput(evt.mousePos), lastViewport)) {
+            if (lastViewport.width > newViewport.width && arrivalTime < noZoomInUntilMs && evt.type !== EventType.SCROLL) {
+                if (evt.type === EventType.HOVER) {
+                    if (evt.endTime - HoverMinDurationMs > noZoomInUntilMs) {
+                        // We can delay the zoom to hover
+                        arrivalTime = noZoomInUntilMs;
+                    } else {
+                        continue; // Skip this motion
+                    }
                 } else {
-                    continue; // Skip this motion
+                    continue; // Skip this motion (click too fast?)
                 }
-            } else {
-                continue; // Skip this motion (click/scroll too fast?)
-            }
-        } else if (lastViewport.width === newViewport.width) {
-            // if last viewport is of the same size, skip the motion if delta x,y diagonal between the two viewports are smaller than 20% of the viewport bigger side.
-            const dx = newViewport.x - lastViewport.x;
-            const dy = newViewport.y - lastViewport.y;
-            const diagonalDistance = Math.sqrt(dx * dx + dy * dy);
+            } else if (lastViewport.width <= newViewport.width) {
+                // if last viewport is of the same size, skip the motion if delta x,y diagonal between the two viewports are smaller than 20% of the viewport bigger side.
+                const dx = newViewport.x - lastViewport.x;
+                const dy = newViewport.y - lastViewport.y;
+                const diagonalDistance = Math.sqrt(dx * dx + dy * dy);
+                const maxSide = Math.max(lastViewport.width, lastViewport.height);
+                const threshold = maxSide * 0.2;
 
-            const maxSide = Math.max(lastViewport.width, lastViewport.height);
-            const threshold = maxSide * 0.2;
+                if (diagonalDistance < threshold) {
+                    // if we are scrolling we need to make sure x aligns to show full scroll port
+                    if (evt.type === EventType.SCROLL) {
+                        if (Math.abs(dx) < 10) {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
 
-            if (diagonalDistance < threshold) {
-                continue;
             }
         }
 
@@ -218,7 +231,8 @@ export function calculateZoomSchedule(
             motions.push({
                 sourceEndTimeMs: sourceEndTime,
                 durationMs: duration,
-                rect: newViewport
+                rect: newViewport,
+                reason: evt.type
             });
             motionOutputTimes.push(arrivalTime);
         }
