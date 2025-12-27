@@ -29,7 +29,7 @@ function runTests() {
 
         // Input to Output Mapping
         // Center of input (1000, 1000) should be center of output (500, 500)
-        const p = mapper.inputToOutput({ x: 1000, y: 1000 });
+        const p = mapper.inputToOutputPoint({ x: 1000, y: 1000 });
         assert(p.x === 500, `Center X: ${p.x}`);
         assert(p.y === 500, `Center Y: ${p.y}`);
 

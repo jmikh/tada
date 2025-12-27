@@ -109,8 +109,9 @@ chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response) => {
     logger.log("[Content] Initial recording state:", response);
     if (response && response.isRecording) {
         isRecording = true;
-        // If we missed the start message, we might lack recordingStartTime. 
-        // Ideally background stores it.
+        if (response.startTime) {
+            recordingStartTime = response.startTime;
+        }
     }
 });
 
@@ -537,12 +538,12 @@ window.addEventListener('scroll', (e) => {
 
     if (!chrome.runtime?.id) return;
 
-    let boundingBox: Rect;
+    let targetRect: Rect;
 
     if (e.target instanceof Element) {
         // It's a nested element scroll
         const rect = e.target.getBoundingClientRect();
-        boundingBox = {
+        targetRect = {
             x: rect.left,
             y: rect.top,
             width: rect.width,
@@ -550,14 +551,14 @@ window.addEventListener('scroll', (e) => {
         };
     } else {
         // Full Page Scroll - detect effective viewport
-        boundingBox = getLayoutAwareViewport();
+        targetRect = getLayoutAwareViewport();
     }
 
 
     sendMessageToBackground('SCROLL', {
         timestamp: now,
         mousePos: lastMousePos.mousePos,
-        boundingBox: dprScaleRect(boundingBox)
+        targetRect: dprScaleRect(targetRect)
     });
 }, true); // Use capture to detect nested scrolls (which don't bubble)
 

@@ -11,6 +11,11 @@ export type ID = string;
  */
 export type TimeMs = number;
 
+export interface Point {
+    x: number;
+    y: number;
+}
+
 export interface Size {
     width: number;
     height: number;
@@ -104,6 +109,7 @@ export interface UserEvents {
     drags: DragEvent[];
     scrolls: ScrollEvent[];
     typingEvents: TypingEvent[];
+    urlChanges: UrlChangeEvent[];
 }
 
 
@@ -181,7 +187,6 @@ export interface DragEvent extends BaseEvent {
 // USER EVENTS DURING RECORDING
 // ==========================================
 
-export interface Point { x: number; y: number; }
 // Size is already defined above
 
 // Size is already defined above
@@ -213,7 +218,7 @@ export interface MousePositionEvent extends BaseEvent {
     type: typeof EventType.MOUSEPOS;
 }
 
-export interface UrlEvent extends BaseEvent {
+export interface UrlChangeEvent extends BaseEvent {
     type: typeof EventType.URLCHANGE;
     url: string;
 }
@@ -237,7 +242,7 @@ export interface HoverEvent extends BaseEvent {
 
 export interface ScrollEvent extends BaseEvent {
     type: typeof EventType.SCROLL;
-    boundingBox: Rect;
+    targetRect: Rect;
 }
 
 export interface TypingEvent extends BaseEvent {
@@ -246,7 +251,8 @@ export interface TypingEvent extends BaseEvent {
     endTime: number;
 }
 
-export type UserEvent = MouseClickEvent | MousePositionEvent | UrlEvent | KeyboardEvent | HoverEvent | DragEvent | ScrollEvent | TypingEvent;
+// In UserEvent Union
+export type UserEvent = MouseClickEvent | MousePositionEvent | UrlChangeEvent | KeyboardEvent | HoverEvent | DragEvent | ScrollEvent | TypingEvent;
 
 export type BackgroundType = 'solid' | 'image';
 

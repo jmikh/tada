@@ -1,17 +1,31 @@
-import { type Size, EventType, type UserEvents, type MouseClickEvent, type MousePositionEvent, type KeyboardEvent, type DragEvent, type TypingEvent } from '../core/types';
+
+import { type Size, EventType, type UserEvents, type MouseClickEvent, type MousePositionEvent, type KeyboardEvent, type DragEvent, type TypingEvent, type UrlChangeEvent } from '../core/types';
 import { logger } from '../utils/logger';
 
 logger.log("Background service worker running");
 
 interface BackgroundState {
     isRecording: boolean;
+    startTime: number;
     events: any[];
 }
 
 const state: BackgroundState = {
     isRecording: false,
+    startTime: 0,
     events: []
 };
+
+// Hydrate state on startup (in case service worker woke up)
+chrome.storage.local.get(['recordingSyncTimestamp', 'isRecording'], (result: { recordingSyncTimestamp?: number, isRecording?: boolean }) => {
+    if (result.recordingSyncTimestamp) {
+        state.startTime = result.recordingSyncTimestamp;
+        // If we have a start time, and likely were recording
+        if (result.isRecording) {
+            state.isRecording = result.isRecording;
+        }
+    }
+});
 
 // Ensure offscreen document exists
 async function setupOffscreenDocument(path: string) {
@@ -57,7 +71,8 @@ function categorizeEvents(events: any[]): UserEvents {
         keyboardEvents: [],
         drags: [],
         scrolls: [],
-        typingEvents: []
+        typingEvents: [],
+        urlChanges: []
     };
 
     for (const e of events) {
@@ -79,6 +94,9 @@ function categorizeEvents(events: any[]): UserEvents {
                 break;
             case EventType.TYPING:
                 categorized.typingEvents.push(e as TypingEvent);
+                break;
+            case EventType.URLCHANGE:
+                categorized.urlChanges.push(e as UrlChangeEvent);
                 break;
             default:
                 // Ignore unknown types
@@ -105,7 +123,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         return true;
     } else if (message.type === 'GET_RECORDING_STATE') {
-        sendResponse({ isRecording: state.isRecording });
+        const responseState = {
+            isRecording: state.isRecording,
+            startTime: state.startTime
+        };
+        sendResponse(responseState);
     } else if (message.type === 'START_RECORDING') {
         const { tabId } = message;
 
@@ -224,12 +246,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
 
                 state.isRecording = true;
+                state.startTime = syncTimestamp;
                 state.events = []; // Reset events
 
                 // Store Sync Timestamp (optional now, but good for debug)
                 chrome.storage.local.set({
                     currentSessionEvents: [],
-                    recordingSyncTimestamp: syncTimestamp
+                    recordingSyncTimestamp: syncTimestamp,
+                    isRecording: true
                 });
 
                 // Notify content script safely
@@ -282,10 +306,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
         state.isRecording = false;
 
+        // Clear persistence
+        chrome.storage.local.remove(['recordingSyncTimestamp', 'isRecording']);
+
         sendResponse({ success: true });
     } else if (message.type === 'OPEN_EDITOR') {
         chrome.tabs.create({ url: message.url });
     }
 });
-
-

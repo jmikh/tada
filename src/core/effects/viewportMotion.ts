@@ -1,4 +1,4 @@
-import { type UserEvent, type UserEvents, type ViewportMotion, type Size, type Rect, EventType } from '../types';
+import { type UserEvents, type ViewportMotion, type Size, type Rect } from '../types';
 import { ViewMapper } from './viewMapper';
 
 export * from './viewMapper';
@@ -7,105 +7,8 @@ export * from './viewMapper';
 // Core Abstractions
 // ============================================================================
 
+
 const HoverMinDurationMs = 1000;
-
-/**
- * Analyzes a stream of UserEvents to detect periods where the mouse remains
- * relatively stationary (within a bounding box) for a minimum duration.
- * Returns these periods as synthetic 'HoverEvents'.
- */
-function findHoverEvents(
-    events: UserEvents,
-    inputSize: Size
-): UserEvent[] {
-    const hoverBoxSize = Math.max(inputSize.width, inputSize.height) * 0.1;
-
-
-    const hoverEvents: UserEvent[] = [];
-
-    const boundaries: number[] = [
-        ...(events.mouseClicks || []).map(e => e.timestamp),
-        ...(events.scrolls || []).map(e => e.timestamp)
-    ].sort((a, b) => a - b);
-
-    let i = 0;
-    let boundaryIdx = 0;
-
-    while (i < events.mousePositions.length) {
-        // Fast-forward disruption index to be relevant for current start time
-        while (
-            boundaryIdx < boundaries.length &&
-            boundaries[boundaryIdx] <= events.mousePositions[i].timestamp
-        ) {
-            boundaryIdx++;
-        }
-
-        // The next disruption that could interrupt a hover starting at segment[i]
-        const nextBoundaryTime = (boundaryIdx < boundaries.length)
-            ? boundaries[boundaryIdx]
-            : Number.POSITIVE_INFINITY;
-
-        if (events.mousePositions[i].timestamp + HoverMinDurationMs >= nextBoundaryTime) {
-            i++;
-            continue;
-        }
-
-        let j = i;
-        let minX = events.mousePositions[i].mousePos.x;
-        let maxX = events.mousePositions[i].mousePos.x;
-        let minY = events.mousePositions[i].mousePos.y;
-        let maxY = events.mousePositions[i].mousePos.y;
-
-        while (j < events.mousePositions.length) {
-            const p = events.mousePositions[j]; // p is MouseEvent
-            if (p.timestamp >= nextBoundaryTime) {
-                break;
-            }
-
-            const newMinX = Math.min(minX, p.mousePos.x);
-            const newMaxX = Math.max(maxX, p.mousePos.x);
-            const newMinY = Math.min(minY, p.mousePos.y);
-            const newMaxY = Math.max(maxY, p.mousePos.y);
-
-
-            if ((newMaxX - newMinX) <= hoverBoxSize && (newMaxY - newMinY) <= hoverBoxSize) {
-                minX = newMinX;
-                maxX = newMaxX;
-                minY = newMinY;
-                maxY = newMaxY;
-                j++;
-            } else {
-                break;
-            }
-        }
-
-        if (j > i) {
-            const startEvent = events.mousePositions[i];
-            const endEvent = events.mousePositions[j - 1];
-            const duration = endEvent.timestamp - startEvent.timestamp;
-
-            if (duration >= HoverMinDurationMs) {
-                const points = events.mousePositions.slice(i, j);
-                const centerX = points.reduce((sum, p) => sum + p.mousePos.x, 0) / points.length;
-                const centerY = points.reduce((sum, p) => sum + p.mousePos.y, 0) / points.length;
-
-                hoverEvents.push({
-                    type: 'hover',
-                    timestamp: startEvent.timestamp, // Source Time
-                    mousePos: { x: centerX, y: centerY },
-                    endTime: endEvent.timestamp
-                } as UserEvent);
-                i = j;
-            } else {
-                i++;
-            }
-        } else {
-            i++;
-        }
-    }
-
-    return hoverEvents;
-}
 
 // Re-export time mapper for convenience if needed, or import directly
 import { mapSourceToOutputTime, mapOutputToSourceTime, getOutputDuration } from './timeMapper';
@@ -136,6 +39,7 @@ const recalculateOutputTimeEvents = (
         drags: mapFn(sourceEvents.drags),
         scrolls: mapFn(sourceEvents.scrolls),
         typingEvents: mapFn(sourceEvents.typingEvents),
+        urlChanges: mapFn(sourceEvents.urlChanges), // Add this
     };
 };
 
@@ -146,189 +50,341 @@ export function calculateZoomSchedule(
     outputWindows: OutputWindow[],
     timelineOffsetMs: number
 ): ViewportMotion[] {
-    console.log('[ZoomDebug] calculateZoomSchedule');
-    const motions: ViewportMotion[] = [];
+    return calculateZoomSchedule2(maxZoom, viewMapper, events, outputWindows, timelineOffsetMs);
+}
+
+export function calculateZoomSchedule2(
+    _maxZoom: number,
+    viewMapper: ViewMapper,
+    events: UserEvents,
+    outputWindows: OutputWindow[],
+    timelineOffsetMs: number
+): ViewportMotion[] {
+    console.log('[ZoomDebug] calculateZoomSchedule2');
 
     // 1. Map all events to Output Time
     const outputTimeEvents = recalculateOutputTimeEvents(events, outputWindows, timelineOffsetMs);
     if (!outputTimeEvents) return [];
 
-    // 2. Find Hovers 
-    const outputHovers = findHoverEvents(outputTimeEvents, viewMapper.inputVideoSize);
-
-    // 3. Merge Clicks, Hovers, and Scrolls
-    const relevantEvents = [
+    // 2. Prepare Explicit Events
+    // 2. Prepare Explicit Events
+    const explicitEvents = [
         ...(outputTimeEvents.mouseClicks || []),
         ...(outputTimeEvents.scrolls || []),
-        ...outputHovers
+        ...(outputTimeEvents.typingEvents || []),
+        ...(outputTimeEvents.urlChanges || [])
     ].sort((a: any, b: any) => a.timestamp - b.timestamp);
 
+    const mousePositions = outputTimeEvents.mousePositions || [];
+    let mousePosIdx = 0;
+    let explicitIdx = 0;
 
-    const minViewportWidth = viewMapper.outputVideoSize.width / maxZoom;
-    const ZOOM_TRANSITION_DURATION = 500;
+    const hoverBoxSize = Math.max(viewMapper.inputVideoSize.width, viewMapper.inputVideoSize.height) * 0.1;
 
-    // Track local scope for duration smoothing
-    const motionOutputTimes: number[] = [];
+    const findNextHover = (timeLimit: number) => {
+        let searchIdx = mousePosIdx;
 
-    let noZoomInUntilMs = 1000;
-    let lastViewport: Rect = { x: 0, y: 0, width: viewMapper.outputVideoSize.width, height: viewMapper.outputVideoSize.height };
+        while (searchIdx < mousePositions.length) {
+            if (mousePositions[searchIdx].timestamp >= timeLimit) {
+                break;
+            }
 
-    for (let i = 0; i < relevantEvents.length; i++) {
-        const evt = relevantEvents[i] as any;
+            let i = searchIdx;
+            // Start Hover Check at i
+            let j = i;
+            let minX = mousePositions[i].mousePos.x;
+            let maxX = mousePositions[i].mousePos.x;
+            let minY = mousePositions[i].mousePos.y;
+            let maxY = mousePositions[i].mousePos.y;
 
-        let arrivalTime = evt.timestamp;
+            let validHoverEndIdx = -1;
 
-        // Calculate Target Viewport State
-        const newViewport = createTargetViewport(evt, viewMapper, minViewportWidth);
-        console.log('[ZoomDebug] Event', evt, ' New Viewport', newViewport);
+            while (j < mousePositions.length) {
+                const p = mousePositions[j];
+                // If we cross the time limit, we stop scanning for this specific hover sequence
+                if (p.timestamp >= timeLimit) break;
 
-        if (evt.type === EventType.SCROLL) {
-            noZoomInUntilMs = evt.timestamp + 2000;
-            console.log('[ZoomDebug] No Zoom In Until', noZoomInUntilMs);
-        }
+                const newMinX = Math.min(minX, p.mousePos.x);
+                const newMaxX = Math.max(maxX, p.mousePos.x);
+                const newMinY = Math.min(minY, p.mousePos.y);
+                const newMaxY = Math.max(maxY, p.mousePos.y);
 
-        let duration = ZOOM_TRANSITION_DURATION;
-
-
-        if (isPointInRect(viewMapper.inputToOutput(evt.mousePos), lastViewport)) {
-            if (lastViewport.width > newViewport.width && arrivalTime < noZoomInUntilMs && evt.type !== EventType.SCROLL) {
-                if (evt.type === EventType.HOVER) {
-                    if (evt.endTime - HoverMinDurationMs > noZoomInUntilMs) {
-                        // We can delay the zoom to hover
-                        arrivalTime = noZoomInUntilMs;
-                    } else {
-                        continue; // Skip this motion
+                if ((newMaxX - newMinX) <= hoverBoxSize && (newMaxY - newMinY) <= hoverBoxSize) {
+                    // Still within box
+                    const d = p.timestamp - mousePositions[i].timestamp;
+                    if (d >= HoverMinDurationMs) {
+                        validHoverEndIdx = j;
                     }
+
+                    minX = newMinX;
+                    maxX = newMaxX;
+                    minY = newMinY;
+                    maxY = newMaxY;
+                    j++;
                 } else {
-                    continue; // Skip this motion (click too fast?)
+                    break; // Broken box
                 }
-            } else if (lastViewport.width <= newViewport.width) {
-                // if last viewport is of the same size, skip the motion if delta x,y diagonal between the two viewports are smaller than 20% of the viewport bigger side.
-                const dx = newViewport.x - lastViewport.x;
-                const dy = newViewport.y - lastViewport.y;
-                const diagonalDistance = Math.sqrt(dx * dx + dy * dy);
-                const maxSide = Math.max(lastViewport.width, lastViewport.height);
-                const threshold = maxSide * 0.2;
+            }
 
-                if (diagonalDistance < threshold) {
-                    // if we are scrolling we need to make sure x aligns to show full scroll port
-                    if (evt.type === EventType.SCROLL) {
-                        if (Math.abs(dx) < 10) {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
+            if (validHoverEndIdx !== -1) {
+                // We found a hover!
+                const startP = mousePositions[i];
+                const endP = mousePositions[validHoverEndIdx];
 
+                // Calculate center
+                const points = mousePositions.slice(i, validHoverEndIdx + 1);
+                const centerX = points.reduce((sum, p) => sum + p.mousePos.x, 0) / points.length;
+                const centerY = points.reduce((sum, p) => sum + p.mousePos.y, 0) / points.length;
+
+                // Capture variable 
+                mousePosIdx = validHoverEndIdx + 1;
+
+                return {
+                    type: 'hover',
+                    timestamp: startP.timestamp,
+                    endTime: endP.timestamp,
+                    mousePos: { x: centerX, y: centerY }
+                };
+            }
+
+            searchIdx++;
+        }
+        return null;
+    };
+
+    const isRectContained = (inner: Rect, outer: Rect): boolean => {
+        return inner.x >= outer.x &&
+            inner.y >= outer.y &&
+            (inner.x + inner.width) <= (outer.x + outer.width) &&
+            (inner.y + inner.height) <= (outer.y + outer.height);
+    };
+
+    const motions: ViewportMotion[] = [];
+    const outputVideoSize = viewMapper.outputVideoSize;
+    let lastViewport: Rect = { x: 0, y: 0, width: outputVideoSize.width, height: outputVideoSize.height };
+    const maxZoom = _maxZoom; // Use User Argument
+
+    const processEvent = (evt: any, isHover: boolean) => {
+        const mustSeeRect = getMustSeeRect(evt, maxZoom, viewMapper);
+        const targetViewport = getViewport(mustSeeRect, maxZoom, viewMapper);
+
+        const mustSeeFits = isRectContained(mustSeeRect, lastViewport);
+
+        // Use a small epsilon for float comparison safety
+        const sizeChanged = Math.abs(targetViewport.width - lastViewport.width) > 0.1;
+
+        let shouldGenerateMotion = false;
+
+        if (isHover) {
+            // "if current event is a hover only add a viewportMotion if mustseearea doesn't fit entirely in lastviewport"
+            if (!mustSeeFits) {
+                shouldGenerateMotion = true;
+            }
+        } else {
+            // Explicit Event (Click, Scroll, Typing, UrlChange)
+
+            // SPECIAL CASE: URL Change implies a full reset. Always generate motion if not matching.
+            if (evt.type === 'urlchange') {
+                // If not already at full view (which is targetViewport for urlchange), we should zoom out.
+                // Actually, logic below handles "mustSeeFits" and "sizeChanged".
+                // For URL Change, mustSee is full rect. 
+                // If last Viewport is NOT full rect, mustSeeFits will be false (or sizeChanged true).
+                // So we can stick to standard logic.
+                shouldGenerateMotion = true;
+            } else if (!mustSeeFits || sizeChanged) {
+                // "if mustsee rect doesnt fit entirely in lastviewport or new viewport is not same size as last viewport , then add a viewportMotion"
+                shouldGenerateMotion = true;
             }
         }
 
-        const sourceEndTime = mapOutputToSourceTime(arrivalTime, outputWindows, timelineOffsetMs);
-        if (sourceEndTime == -1) {
-            console.error("converting to invalid source time in zoom calculatinos");
+        if (shouldGenerateMotion) {
+            const sourceEndTime = mapOutputToSourceTime(evt.timestamp, outputWindows, timelineOffsetMs);
+            if (sourceEndTime !== -1) {
+                motions.push({
+                    sourceEndTimeMs: sourceEndTime,
+                    durationMs: 500, // Hardcoded transition duration for now?
+                    rect: targetViewport,
+                    reason: evt.type
+                });
+                lastViewport = targetViewport;
+            }
+        }
+    };
+
+
+    const ZOOM_TRANSITION_DURATION = 500;
+    const IGNORE_EVENTS_BUFFER = 3000;
+    const totalOutputDuration = getOutputDuration(outputWindows);
+    const zoomOutStartTime = Math.max(0, totalOutputDuration - IGNORE_EVENTS_BUFFER);
+
+
+    while (explicitIdx < explicitEvents.length || mousePosIdx < mousePositions.length) {
+        // Determine the time limit for the next potential hover scan
+        const nextExplicit = explicitIdx < explicitEvents.length ? explicitEvents[explicitIdx] : null;
+
+        // CHECK IGNORE BUFFER
+        if (nextExplicit && nextExplicit.timestamp >= zoomOutStartTime) {
+            // Next explicit event is in the ignore zone. We effectively stop processing explicit events.
+            // We also shouldn't scan for hovers past this point.
+            break;
+        }
+
+        // If we have an explicit event coming up, we only scan for hovers up to that point.
+        // If we run out of explicit events, we scan until the end of mouse positions.
+        let hoverTimeLimit = nextExplicit ? nextExplicit.timestamp : Number.POSITIVE_INFINITY;
+
+        // Clamp timeLimit to zoomOutStartTime
+        if (hoverTimeLimit > zoomOutStartTime) {
+            hoverTimeLimit = zoomOutStartTime;
+        }
+
+        // --- SCAN FOR HOVER ---
+        // We look for a hover starting at mousePosIdx that FINISHES before timeLimit.
+
+        let foundHover: any = null;
+
+        if (mousePosIdx < mousePositions.length) {
+            foundHover = findNextHover(hoverTimeLimit);
+        }
+
+        if (foundHover) {
+            processEvent(foundHover, true);
+            continue;
+        }
+
+        // --- NO HOVER FOUND ---
+        if (nextExplicit) {
+            processEvent(nextExplicit, false);
+            explicitIdx++;
+
+            // Advance mousePosIdx to be at least past this event to avoid scanning ancient history
+            while (mousePosIdx < mousePositions.length && mousePositions[mousePosIdx].timestamp <= nextExplicit.timestamp) {
+                mousePosIdx++;
+            }
         } else {
-            lastViewport = newViewport;
+            // No hover found, and no explicit event left (or we hit time limit/zoomOutStart). We are done.
+            break;
+        }
+    }
+
+    // --- APPEND FINAL ZOOM OUT ---
+    // "only if last viewportMotion is a not a full zoomout already"
+    const isFullZoom = Math.abs(lastViewport.width - outputVideoSize.width) < 1;
+
+    if (!isFullZoom) {
+        // Add zoom out to full view
+        // Start: zoomOutStartTime
+        // Duration: ZOOM_TRANSITION_DURATION
+        // End (Output Time): zoomOutStartTime + ZOOM_TRANSITION_DURATION
+        const zoomOutEndTime = zoomOutStartTime + ZOOM_TRANSITION_DURATION;
+        const sourceEndTime = mapOutputToSourceTime(zoomOutEndTime, outputWindows, timelineOffsetMs);
+
+        if (sourceEndTime !== -1) {
             motions.push({
                 sourceEndTimeMs: sourceEndTime,
-                durationMs: duration,
-                rect: newViewport,
-                reason: evt.type
+                durationMs: ZOOM_TRANSITION_DURATION,
+                rect: { x: 0, y: 0, width: outputVideoSize.width, height: outputVideoSize.height },
+                reason: 'end_zoomout'
             });
-            motionOutputTimes.push(arrivalTime);
         }
     }
-
-    // Force zoom out at the end
-    const lastWindow = outputWindows[outputWindows.length - 1];
-    const totalOutputDuration = getOutputDuration(outputWindows);
-
-    const zoomoutBufferMs = 1000;
-    const zoomOutStartTime = Math.max(0, totalOutputDuration - ZOOM_TRANSITION_DURATION - zoomoutBufferMs);
-
-    if (motions.length > 0) {
-        const lastMotionEndTime = motionOutputTimes[motionOutputTimes.length - 1];
-        if (lastMotionEndTime > zoomOutStartTime) {
-            motions.pop();
-            motionOutputTimes.pop();
-        }
-        const finalSourceEndTime = lastWindow.endMs - timelineOffsetMs - zoomoutBufferMs;
-
-        motions.push({
-            sourceEndTimeMs: finalSourceEndTime,
-            durationMs: ZOOM_TRANSITION_DURATION,
-            rect: { x: 0, y: 0, width: viewMapper.outputVideoSize.width, height: viewMapper.outputVideoSize.height },
-            reason: 'end_zoomout'
-        });
-    }
-
 
     return motions;
 }
 
-function createTargetViewport(evt: any, viewMapper: ViewMapper, minViewportWidth: number): Rect {
-    let unconstrainedViewport: Rect;
+export function getMustSeeRect(
+    evt: any,
+    maxZoom: number,
+    viewMapper: ViewMapper
+): Rect {
+    const outputSize = viewMapper.outputVideoSize;
+    const aspectRatio = outputSize.width / outputSize.height;
 
-    if (evt.type === 'scroll') {
-        unconstrainedViewport = createScrollViewport(evt, viewMapper, minViewportWidth);
+    // Default "Target" size (smaller than full zoom)
+    const minWidth = outputSize.width / (maxZoom * 2);
+    const minHeight = minWidth / aspectRatio;
+
+    let targetWidth = minWidth;
+    let targetHeight = minHeight;
+    let centerX = 0;
+    let centerY = 0;
+
+    if (evt.type === 'typing' || evt.type === 'scroll') {
+        const targetRect = evt.targetRect || { x: 0, y: 0, width: outputSize.width, height: outputSize.height };
+        const mappedTargetRect = viewMapper.inputToOutputRect(targetRect);
+
+        // Calculate Target Dimensions
+        // Add 10% padding to target rect
+        targetWidth = Math.max(minWidth, mappedTargetRect.width * 1.1);
+        // Clamp to output size if it overflows
+        targetWidth = Math.min(outputSize.width, targetWidth);
+        targetHeight = targetWidth / aspectRatio;
+
+        // Determine Center
+        // If the target area height fits in our calculated view height, center on the target area.
+        if (mappedTargetRect.height <= targetHeight) {
+            centerX = mappedTargetRect.x + mappedTargetRect.width / 2;
+            centerY = mappedTargetRect.y + mappedTargetRect.height / 2;
+        } else {
+            // Target area is too tall (e.g. long text block or long scroll). Center horizontally, 
+            // but vertically focus on the mouse cursor (where user is interacting)
+            centerX = mappedTargetRect.x + mappedTargetRect.width / 2;
+            const mouseOut = viewMapper.inputToOutputPoint(evt.mousePos);
+            centerY = mouseOut.y;
+        }
+
+    } else if (evt.type === 'urlchange') {
+        // URL Change -> Full View
+        targetWidth = outputSize.width;
+        targetHeight = outputSize.height;
+        centerX = targetWidth / 2;
+        centerY = targetHeight / 2;
+
     } else {
-        unconstrainedViewport = createStandardViewport(evt, viewMapper, minViewportWidth);
+        // Click / Hover / Scroll
+        const mouseOut = viewMapper.inputToOutputPoint(evt.mousePos);
+        centerX = mouseOut.x;
+        centerY = mouseOut.y;
     }
 
-    return clampViewport(unconstrainedViewport, viewMapper.outputVideoSize);
-}
-
-function createScrollViewport(evt: any, viewMapper: ViewMapper, minViewportWidth: number): Rect {
-    const outputSize = viewMapper.outputVideoSize;
-    // --- SCROLL ZOOM LOGIC ---
-    // 1. Calculate Target Width from Bounding Box (in Output Space)
-    const p1 = viewMapper.inputToOutput({ x: 0, y: 0 });
-    const p2 = viewMapper.inputToOutput({ x: evt.boundingBox.width, y: 0 });
-    const boxWidthOutput = Math.abs(p2.x - p1.x); // Assumes linear scaling
-
-    let targetWidth = boxWidthOutput;
-
-    if (targetWidth > outputSize.width) targetWidth = outputSize.width;
-    if (targetWidth < minViewportWidth) targetWidth = minViewportWidth;
-
-    // Aspect Ratio is fixed to Output Video
-    const aspectRatio = outputSize.width / outputSize.height;
-    const targetHeight = targetWidth / aspectRatio;
-
-    // 2. Calculate Center (Horizontal: Box Center, Vertical: Mouse Position)
-    const inputBoxCenterX = evt.boundingBox.x + evt.boundingBox.width / 2;
-    const inputMouseY = evt.mousePos.y;
-
-    const centerOutput = viewMapper.inputToOutput({ x: inputBoxCenterX, y: inputMouseY });
-    const centerX = centerOutput.x;
-    const centerY = centerOutput.y;
-
-    return {
+    return clampViewport({
         x: centerX - targetWidth / 2,
         y: centerY - targetHeight / 2,
         width: targetWidth,
         height: targetHeight
-    };
+    }, outputSize);
 }
 
-function createStandardViewport(evt: any, viewMapper: ViewMapper, minViewportWidth: number): Rect {
-    // --- STANDARD ZOOM LOGIC (Click/Hover) ---
+export function getViewport(
+    mustSeeRect: Rect,
+    maxZoom: number,
+    viewMapper: ViewMapper
+): Rect {
     const outputSize = viewMapper.outputVideoSize;
-    const targetWidth = minViewportWidth;
+    const aspectRatio = outputSize.width / outputSize.height;
+
+    // Minimum viewport size allowed by MAX ZOOM
+    const minViewportWidth = outputSize.width / maxZoom;
+
+    // The viewport must be at least as big as the mustSeeRect, 
+    // but also at least as big as maxZoom allows.
+    let viewportWidth = Math.max(minViewportWidth, mustSeeRect.width);
+
     // Maintain Aspect Ratio
-    const aspectRatio = outputSize.width / outputSize.height;
-    const targetHeight = targetWidth / aspectRatio;
+    let viewportHeight = viewportWidth / aspectRatio;
 
-    const centerOutput = viewMapper.inputToOutput({ x: evt.mousePos.x, y: evt.mousePos.y });
-    const centerX = centerOutput.x;
-    const centerY = centerOutput.y;
+    // Center around the Must See Rect
+    const centerX = mustSeeRect.x + mustSeeRect.width / 2;
+    const centerY = mustSeeRect.y + mustSeeRect.height / 2;
 
-    return {
-        x: centerX - targetWidth / 2,
-        y: centerY - targetHeight / 2,
-        width: targetWidth,
-        height: targetHeight
+    const viewport = {
+        x: centerX - viewportWidth / 2,
+        y: centerY - viewportHeight / 2,
+        width: viewportWidth,
+        height: viewportHeight
     };
+
+    return clampViewport(viewport, outputSize);
 }
 
 function clampViewport(viewport: Rect, outputSize: Size): Rect {
@@ -344,6 +400,9 @@ function clampViewport(viewport: Rect, outputSize: Size): Rect {
 
     return { x, y, width, height };
 }
+
+
+
 
 
 // ============================================================================
@@ -446,7 +505,4 @@ function interpolateRect(from: Rect, to: Rect, t: number): Rect {
 
 
 
-function isPointInRect(point: { x: number, y: number }, rect: Rect): boolean {
-    return point.x >= rect.x && point.x <= rect.x + rect.width &&
-        point.y >= rect.y && point.y <= rect.y + rect.height;
-}
+

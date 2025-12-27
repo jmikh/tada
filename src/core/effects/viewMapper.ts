@@ -40,7 +40,7 @@ export class ViewMapper {
     /**
      * Maps a point from Input Space (Source Video) to Output Space (Canvas).
      */
-    inputToOutput(point: Point): Point {
+    inputToOutputPoint(point: Point): Point {
         // 1. Normalize in Input Space (0..1)
         const nx = point.x / this.inputVideoSize.width;
         const ny = point.y / this.inputVideoSize.height;
@@ -49,6 +49,20 @@ export class ViewMapper {
         return {
             x: this.contentRect.x + nx * this.contentRect.width,
             y: this.contentRect.y + ny * this.contentRect.height
+        };
+    }
+
+    /**
+     * Maps a rectangle from Input Space to Output Space.
+     */
+    inputToOutputRect(rect: Rect): Rect {
+        const p1 = this.inputToOutputPoint({ x: rect.x, y: rect.y });
+        const p2 = this.inputToOutputPoint({ x: rect.x + rect.width, y: rect.y + rect.height });
+        return {
+            x: p1.x,
+            y: p1.y,
+            width: Math.abs(p2.x - p1.x),
+            height: Math.abs(p2.y - p1.y)
         };
     }
 
@@ -96,7 +110,7 @@ export class ViewMapper {
      */
     projectToScreen(point: Point, viewport: Rect): Point {
         // 1. Input -> Output Space
-        const outputPoint = this.inputToOutput(point);
+        const outputPoint = this.inputToOutputPoint(point);
 
         // 2. Output Space -> Screen (Relative to Viewport)
         // (p - cam.x) * scale
