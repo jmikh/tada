@@ -51,7 +51,7 @@ export function drawScreen(
 
     // 4. Resolve View Mapping
     const outputSize = project.settings.outputSize;
-    const padding = project.settings.padding ?? 0.1;
+    const padding = project.settings.padding;
     const viewMapper = new ViewMapper(inputSize, outputSize, padding);
 
     // 5. Draw Video
