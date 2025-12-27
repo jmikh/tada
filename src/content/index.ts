@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { type Size, EventType, type MousePositionEvent, type Rect } from '../core/types';
+import { MSG } from '../shared/messages';
 
 // Cleanup mechanism:
 // When a new version of the script loads, it dispatches 'recordo-cleanup' to tell 
@@ -57,7 +58,7 @@ const MOUSE_POLL_INTERVAL = 100;
 // Listen for recording state changes from background
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
     logger.log("[Content] Received message:", message);
-    if (message.type === 'RECORDING_STATUS_CHANGED') {
+    if (message.type === MSG.RECORDING_STATUS_CHANGED) {
         isRecording = message.isRecording;
         if (isRecording && message.startTime) {
             recordingStartTime = message.startTime;
@@ -66,7 +67,7 @@ chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
         if (isRecording) {
             sendUrlEvent('status_change');
         }
-    } else if (message.type === 'SHOW_COUNTDOWN') {
+    } else if (message.type === MSG.SHOW_COUNTDOWN) {
         startCountdown();
     }
 });
@@ -103,13 +104,13 @@ function startCountdown() {
             clearInterval(interval);
             overlay.remove();
             // Send finish timestamp
-            chrome.runtime.sendMessage({ type: 'COUNTDOWN_FINISHED', timestamp: Date.now() });
+            chrome.runtime.sendMessage({ type: MSG.COUNTDOWN_FINISHED, timestamp: Date.now() });
         }
     }, 1000);
 }
 
 // Also check initial state safely
-chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response) => {
+chrome.runtime.sendMessage({ type: MSG.GET_RECORDING_STATE }, (response) => {
     // ... (existing code, assumes background might not have sent start time in GET_RECORDING_STATE yet? 
     // Actually GET_RECORDING_STATE response in background doesn't include timestamp. 
     // I should probably update background GET_RECORDING_STATE response too, but for now lets rely on the explicit start message or default)

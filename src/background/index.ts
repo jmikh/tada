@@ -1,6 +1,7 @@
 
 import { type Size, EventType, type UserEvents, type MouseClickEvent, type MousePositionEvent, type KeyboardEvent, type DragEvent, type TypingEvent, type UrlChangeEvent } from '../core/types';
 import { logger } from '../utils/logger';
+import { MSG } from '../shared/messages';
 
 logger.log("Background service worker running");
 
@@ -131,7 +132,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             state.events.push(eventWithMeta);
         }
         return true;
-    } else if (message.type === 'GET_RECORDING_STATE') {
+    } else if (message.type === MSG.GET_RECORDING_STATE) {
         let isRecording = state.isRecording;
 
         // "Robust" Logic:
@@ -150,7 +151,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             startTime: state.startTime
         };
         sendResponse(responseState);
-    } else if (message.type === 'START_RECORDING') {
+    } else if (message.type === MSG.START_RECORDING) {
         const { tabId } = message;
 
         (async () => {
@@ -170,7 +171,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 let attempts = 0;
                 while (attempts < 20) {
                     try {
-                        await chrome.runtime.sendMessage({ type: 'PING_OFFSCREEN' });
+                        await chrome.runtime.sendMessage({ type: MSG.PING_OFFSCREEN });
                         break; // Success!
                     } catch (e) {
                         attempts++;
@@ -209,7 +210,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
                 const preparePromise = new Promise<void>((resolve, reject) => {
                     const listener = (msg: any) => {
-                        if (msg.type === 'RECORDING_PREPARED') {
+                        if (msg.type === MSG.RECORDING_PREPARED) {
                             chrome.runtime.onMessage.removeListener(listener);
                             resolve();
                         }
@@ -222,7 +223,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 });
 
                 await chrome.runtime.sendMessage({
-                    type: 'PREPARE_RECORDING',
+                    type: MSG.PREPARE_RECORDING,
                     streamId,
                     data: {
                         ...message,
@@ -240,7 +241,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
                 let syncTimestamp = Date.now(); // Fallback
                 try {
-                    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_COUNTDOWN' });
+                    await chrome.tabs.sendMessage(tabId, { type: MSG.SHOW_COUNTDOWN });
 
                     // Wait for finish
                     syncTimestamp = await new Promise<number>((resolve, _reject) => {
@@ -251,7 +252,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                         }, 5000); // 3s countdown + buffer
 
                         const listener = (msg: any, _sender: any) => {
-                            if (msg.type === 'COUNTDOWN_FINISHED') {
+                            if (msg.type === MSG.COUNTDOWN_FINISHED) {
                                 clearTimeout(timeout);
                                 chrome.runtime.onMessage.removeListener(listener);
                                 resolve(msg.timestamp);
@@ -265,7 +266,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 }
 
                 // 3. Start Actual Recording (MediaRecorder.start)
-                await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
+                await chrome.runtime.sendMessage({ type: MSG.RECORDING_STARTED });
 
                 state.isRecording = true;
                 state.recordingTabId = tabId;
@@ -285,7 +286,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 logger.log("[Background] Sending RECORDING_STATUS_CHANGED=true to tab", tabId);
 
                 try {
-                    await chrome.tabs.sendMessage(tabId, { type: 'RECORDING_STATUS_CHANGED', isRecording: true, startTime: syncTimestamp });
+                    await chrome.tabs.sendMessage(tabId, { type: MSG.RECORDING_STATUS_CHANGED, isRecording: true, startTime: syncTimestamp });
                     logger.log("[Background] Message sent successfully.");
                 } catch (err: any) {
                     logger.log("[Background] Message failed. Attempting injection...", err.message);
@@ -302,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                         // Give it a moment to initialize listeners
                         await new Promise(r => setTimeout(r, 200));
 
-                        await chrome.tabs.sendMessage(tabId, { type: 'RECORDING_STATUS_CHANGED', isRecording: true, startTime: syncTimestamp });
+                        await chrome.tabs.sendMessage(tabId, { type: MSG.RECORDING_STATUS_CHANGED, isRecording: true, startTime: syncTimestamp });
                         logger.log("[Background] Retry message sent successfully.");
                     } catch (injectErr: any) {
                         logger.warn("Could not inject content script. Page might be restricted (e.g. chrome:// URL).", injectErr.message);
@@ -316,7 +317,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             }
         })();
         return true; // Keep channel open
-    } else if (message.type === 'STOP_RECORDING') {
+    } else if (message.type === MSG.STOP_RECORDING) {
         // Sort events by timestamp
         state.events.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -326,7 +327,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const userEvents = categorizeEvents(state.events);
 
         chrome.runtime.sendMessage({
-            type: 'STOP_RECORDING_OFFSCREEN',
+            type: MSG.STOP_RECORDING_OFFSCREEN,
             events: userEvents // Send categorized object instead of raw array
         });
         state.isRecording = false;
@@ -336,7 +337,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         chrome.storage.local.remove(['recordingSyncTimestamp']);
 
         sendResponse({ success: true });
-    } else if (message.type === 'OPEN_EDITOR') {
+    } else if (message.type === MSG.OPEN_EDITOR) {
         chrome.tabs.create({ url: message.url });
     }
 });

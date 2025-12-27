@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react';
 import { logger } from './utils/logger';
+import { MSG, type RecordingStateResponse } from './shared/messages';
 
-interface RecordingStateResponse {
-  isRecording?: boolean;
-  success?: boolean;
-  error?: string;
-}
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -22,7 +18,7 @@ function App() {
 
   useEffect(() => {
     // Check initial recording state
-    chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (response: RecordingStateResponse) => {
+    chrome.runtime.sendMessage({ type: MSG.GET_RECORDING_STATE }, (response: RecordingStateResponse) => {
       if (response && response.isRecording) {
         setIsRecording(true);
       }
@@ -98,7 +94,7 @@ function App() {
       if (!tab?.id) return;
 
       chrome.runtime.sendMessage({
-        type: 'START_RECORDING',
+        type: MSG.START_RECORDING,
         tabId: tab.id,
         hasAudio: isAudioEnabled,
         hasCamera: isVideoEnabled,
@@ -117,7 +113,7 @@ function App() {
   };
 
   const stopRecording = () => {
-    chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, (response: RecordingStateResponse) => {
+    chrome.runtime.sendMessage({ type: MSG.STOP_RECORDING }, (response: RecordingStateResponse) => {
       if (response?.success) {
         setIsRecording(false);
       }

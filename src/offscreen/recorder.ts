@@ -12,12 +12,14 @@ let startTime = 0;
 let projectId: string | null = null;
 
 import type { Size, SourceMetadata, UserEvents } from '../core/types';
+import { MSG } from '../shared/messages';
+
 
 // Notify background that we are ready
-chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
+chrome.runtime.sendMessage({ type: MSG.OFFSCREEN_READY });
 
 chrome.runtime.onMessage.addListener(async (message) => {
-    if (message.type === 'PREPARE_RECORDING') {
+    if (message.type === MSG.PREPARE_RECORDING) {
         const { streamId, data: { hasAudio, hasCamera, audioDeviceId, videoDeviceId, dimensions } } = message as {
             streamId: string;
             data: {
@@ -138,25 +140,25 @@ chrome.runtime.onMessage.addListener(async (message) => {
             }
 
             // NOTIFY READY
-            chrome.runtime.sendMessage({ type: 'RECORDING_PREPARED' });
+            chrome.runtime.sendMessage({ type: MSG.RECORDING_PREPARED });
 
         } catch (err) {
             console.error("Offscreen recording error:", err);
             cleanup();
         }
-    } else if (message.type === 'START_RECORDING') {
+    } else if (message.type === MSG.RECORDING_STARTED) {
         startTime = Date.now();
         projectId = crypto.randomUUID();
         if (screenRecorder && screenRecorder.state === 'inactive') screenRecorder.start();
         if (cameraRecorder && cameraRecorder.state === 'inactive') cameraRecorder.start();
 
         // Ack
-        chrome.runtime.sendMessage({ type: 'RECORDING_STARTED', startTime });
+        chrome.runtime.sendMessage({ type: MSG.RECORDING_STARTED, startTime });
 
-    } else if (message.type === 'STOP_RECORDING_OFFSCREEN') {
+    } else if (message.type === MSG.STOP_RECORDING_OFFSCREEN) {
         const events = message.events || [];
         stopRecording(events);
-    } else if (message.type === 'PING_OFFSCREEN') {
+    } else if (message.type === MSG.PING_OFFSCREEN) {
         return Promise.resolve("PONG");
     }
 });
@@ -280,7 +282,7 @@ async function stopRecording(events: UserEvents) {
     cameraData = [];
     cleanup();
 
-    chrome.runtime.sendMessage({ type: 'OPEN_EDITOR', url: `src/editor/index.html?projectId=${projectId}` });
+    chrome.runtime.sendMessage({ type: MSG.OPEN_EDITOR, url: `src/editor/index.html?projectId=${projectId}` });
 }
 
 async function saveToIndexedDB(
